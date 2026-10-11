@@ -1574,27 +1574,40 @@ local KEY_ALIASES = {
         if not entry or not entry.row then return end
         entry.nameLabel.Text = entry.name
         entry.badge.Visible = entry.showKey
-        entry.indicator.Visible = entry.showIndicator and not entry.showKey
+        entry.indicator.Visible = entry.showIndicator
 
         if entry.showKey then
             local shown = formatKeyName(entry.key)
             entry.badge.Text = shown
             local width = keyBadgeWidth(shown)
             entry.badge.Size = UDim2.new(0, width, 0, 16)
-            local lit = entry.showStatus and entry.active
-            entry.badge.BackgroundColor3 = THEME[lit and "Accent" or "BadgeBg"]
-            local textToken = lit and "KnobOn"
-                or ((entry.key == "None" or entry.key == "") and "TextDim" or "Accent")
+            entry.badge.BackgroundColor3 = THEME.BadgeBg
+            local textToken = (entry.key == "None" or entry.key == "") and "TextDim" or "Accent"
             entry.badge.TextColor3 = THEME[textToken]
             if entry.keyStroke then
-                entry.keyStroke.Color = THEME[lit and "AccentSoft" or "Border"]
+                entry.keyStroke.Color = THEME.Border
             end
-            entry.nameLabel.Size = UDim2.new(1, -(width + 8), 1, 0)
+            if entry.showIndicator then
+                entry.badge.Position = UDim2.new(1, -13, 0.5, 0)
+                entry.indicator.Position = UDim2.new(1, 0, 0.5, 0)
+                entry.nameLabel.Size = UDim2.new(1, -(width + 21), 1, 0)
+            else
+                entry.badge.Position = UDim2.new(1, 0, 0.5, 0)
+                entry.nameLabel.Size = UDim2.new(1, -(width + 8), 1, 0)
+            end
         elseif entry.showIndicator then
-            entry.indicator.BackgroundColor3 = THEME[entry.active and "Accent" or "TextDim"]
+            entry.indicator.Position = UDim2.new(1, 0, 0.5, 0)
             entry.nameLabel.Size = UDim2.new(1, -20, 1, 0)
         else
             entry.nameLabel.Size = UDim2.new(1, 0, 1, 0)
+        end
+
+        if entry.showIndicator then
+            local lit = entry.showStatus and entry.active
+            entry.indicator.BackgroundColor3 = THEME[lit and "Accent" or "TextDim"]
+            if entry.indicatorStroke then
+                entry.indicatorStroke.Color = THEME[lit and "AccentSoft" or "Border"]
+            end
         end
 
         refreshKeybindEmpty()
@@ -1634,18 +1647,12 @@ local KEY_ALIASES = {
         badge.TextTruncate = Enum.TextTruncate.AtEnd
         badge.ZIndex = 63
         badge.Parent = row
-        bindColor(badge, "BackgroundColor3", function()
-            return entry.showStatus and entry.active and "Accent" or "BadgeBg"
-        end)
+        bindColor(badge, "BackgroundColor3", "BadgeBg")
         bindColor(badge, "TextColor3", function()
-            if entry.showStatus and entry.active then return "KnobOn" end
             return (entry.key == "None" or entry.key == "") and "TextDim" or "Accent"
         end)
         kbCorner(badge, 3)
         local keyStroke = kbStroke(badge)
-        bindColor(keyStroke, "Color", function()
-            return entry.showStatus and entry.active and "AccentSoft" or "Border"
-        end)
 
         local indicator = Instance.new("Frame")
         indicator.Name = "Indicator"
@@ -1656,15 +1663,20 @@ local KEY_ALIASES = {
         indicator.ZIndex = 63
         indicator.Parent = row
         bindColor(indicator, "BackgroundColor3", function()
-            return entry.active and "Accent" or "TextDim"
+            return entry.showStatus and entry.active and "Accent" or "TextDim"
         end)
         kbCorner(indicator, 4)
+        local indicatorStroke = kbStroke(indicator, 1)
+        bindColor(indicatorStroke, "Color", function()
+            return entry.showStatus and entry.active and "AccentSoft" or "Border"
+        end)
 
         entry.row = row
         entry.nameLabel = nameLabel
         entry.badge = badge
         entry.keyStroke = keyStroke
         entry.indicator = indicator
+        entry.indicatorStroke = indicatorStroke
         renderKeybindEntry(entry)
     end
 
@@ -1889,30 +1901,6 @@ local KEY_ALIASES = {
             end
         end))
     end
-
-    local function flashKeybind(entry)
-        if not entry.showKey or not entry.badge or not entry.row or not entry.row.Visible then return end
-        tweenColors(entry.badge, TWEEN_FAST, {
-            BackgroundColor3 = THEME.Accent,
-            TextColor3 = THEME.KnobOn,
-        }):Play()
-        task.delay(0.16, function()
-            if not entry.badge or not entry.badge.Parent then return end
-            renderKeybindEntry(entry)
-        end)
-    end
-
-    trackConn(UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if isClosed or gameProcessed then return end
-        if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-        if not KeybindHolder.Visible or kbCollapsed then return end
-        local pressed = input.KeyCode.Name
-        for _, entry in ipairs(kbEntries) do
-            if entry.showKey and entry.key == pressed and entry.row and entry.row.Visible then
-                flashKeybind(entry)
-            end
-        end
-    end))
 
     local function overlayKeybindHandle(id)
         return {
@@ -3051,6 +3039,7 @@ local KEY_ALIASES = {
                 Kind = "keybind",
                 ShowKey = true,
                 ShowStatus = activationMode ~= nil,
+                ShowIndicator = activationMode ~= nil,
                 Active = isActive,
                 Mode = activationMode,
             })

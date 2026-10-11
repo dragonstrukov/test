@@ -172,7 +172,7 @@ Window:CreateThemeTab("Themes", "palette")
 
 Window:Notify({
     Title = "Loaded",
-    Content = "Toggle binds stay lit; hold binds light only while pressed.",
+    Content = "Toggle dots stay lit; hold dots light only while pressed.",
     Duration = 3,
     Icon = "keyboard",
 })

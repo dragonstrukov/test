@@ -119,10 +119,11 @@ print(toggle:Get())
 that lights while enabled, and stays synced with clicks and `Set()` calls.
 Keybinds can opt into activation tracking with `Mode = "Toggle"` or
 `Mode = "Hold"`; without `Mode`, a keybind remains a key picker. In either mode,
-the key badge lights while active. `Toggle` stays lit until the next press;
-`Hold` lights only between key-down and key-up. `OnStateChanged(active)` receives
-state changes, while the existing `Callback(key)` still only fires when the
-assigned key changes. `DefaultActive` applies to toggle mode.
+a small circle next to the key lights while active; the key badge itself stays
+neutral. `Toggle` keeps the circle lit until the next press; `Hold` lights it
+only between key-down and key-up. `OnStateChanged(active)` receives state
+changes, while the existing `Callback(key)` still only fires when the assigned
+key changes. `DefaultActive` applies to toggle mode.
 
 Orion-style aliases are available: `AddToggle`, `AddButton`, `AddSlider`,
 `AddDropdown`, `AddTextbox`, `AddBind`, `AddColorPicker`, `AddLabel`, etc.
@@ -131,9 +132,9 @@ Orion-style aliases are available: `AddToggle`, `AddButton`, `AddSlider`,
 
 A small draggable overlay stays on screen after the menu is hidden. It lists
 every `CreateKeybind` plus the menu toggle key, and updates live when a key
-changes. Pressing a bound key lights its key badge. Toggle controls can also
-show a small state indicator, while `Mode = "Hold"` keybinds light only while
-the key is held.
+changes. Rows show the function name, its key badge, and a separate active-state
+circle. Toggle controls can also show a small state indicator, while
+`Mode = "Hold"` keybinds light their circle only while the key is held.
 
 By default the overlay appears as soon as the first keybind or overlay-enabled
 toggle is created. `CreateWindow({ KeybindList = false })` keeps it hidden.
