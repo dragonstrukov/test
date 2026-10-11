@@ -1605,9 +1605,6 @@ local KEY_ALIASES = {
         if entry.showIndicator then
             local lit = entry.showStatus and entry.active
             entry.indicator.BackgroundColor3 = THEME[lit and "Accent" or "TextMuted"]
-            if entry.indicatorStroke then
-                entry.indicatorStroke.Color = THEME[lit and "AccentSoft" or "Border"]
-            end
         end
 
         refreshKeybindEmpty()
@@ -1666,17 +1663,12 @@ local KEY_ALIASES = {
             return entry.showStatus and entry.active and "Accent" or "TextMuted"
         end)
         kbCorner(indicator, 5)
-        local indicatorStroke = kbStroke(indicator, 1)
-        bindColor(indicatorStroke, "Color", function()
-            return entry.showStatus and entry.active and "AccentSoft" or "Border"
-        end)
 
         entry.row = row
         entry.nameLabel = nameLabel
         entry.badge = badge
         entry.keyStroke = keyStroke
         entry.indicator = indicator
-        entry.indicatorStroke = indicatorStroke
         renderKeybindEntry(entry)
     end
 
