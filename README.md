@@ -40,6 +40,7 @@ local Window = Library:CreateWindow({
     FooterText = "by me",          -- bottom line of the window ("" = hidden)
     ToggleKey = Enum.KeyCode.RightShift, -- hide/show hotkey
     LogoBase64 = "...",            -- your own PNG in base64 for the icon (optional)
+    KeybindList = true,            -- keybind overlay: true / false / options table
 })
 ```
 
@@ -51,6 +52,7 @@ Window methods:
 | `Window:CreateTab(name, icon)` / `Window:CreateTab({Name, Icon})` | Tab, returns `Tab` |
 | `Window:CreateThemeTab(name, icon)` | Tab with the theme list + custom theme editor |
 | `Window:Notify({Title, Content, Duration, Icon})` | Notification (icon is a Lucide name) |
+| `Window:CreateKeybindList(opts)` | Draggable Keybinds overlay (also `GetKeybindList`, `SetKeybindListVisible`) |
 | `Window:SetTheme(name)` / `Window:SetTheme(name, true)` | Switch theme (2nd arg = silent, no notification) |
 | `Window:GetTheme()` / `Window:GetThemes()` | Current theme / list of all themes |
 | `Window:Toggle()` / `Window:Toggle(bool)` / `Window:IsVisible()` | Hide/show the window |
@@ -107,7 +109,7 @@ print(toggle:Get())
 | `CreateDropdown` | `Options` (array of strings or `{Text, Icon}`), `Default` (text or index) | `function(text, index)` |
 | `CreateMultiDropdown` | `Options`, `Default` (`{"A"}` or `{A = true}`) | `function(picked)` — array of selected |
 | `CreateInput` | `Placeholder`, `Default` | `function(text)` — on typing |
-| `CreateKeybind` | `Default` (e.g. `"G"`, `"None"`) | `function(key)` |
+| `CreateKeybind` | `Default` (e.g. `"G"`, `"None"`), `Overlay` (bool), `OverlayName` | `function(key)` |
 | `CreateColorPicker` | `Default` (Color3) | `function(color)` |
 | `CreateProgressBar` | `Default` (0–100), `Interactive` (draggable) | `function(value)` |
 | `CreateLabel(text)` | — | Handle: only `Set(text)` |
@@ -115,6 +117,48 @@ print(toggle:Get())
 
 Orion-style aliases are available: `AddToggle`, `AddButton`, `AddSlider`,
 `AddDropdown`, `AddTextbox`, `AddBind`, `AddColorPicker`, `AddLabel`, etc.
+
+## Keybind list
+
+A small draggable overlay stays on screen after the menu is hidden. It lists
+every `CreateKeybind` plus the menu toggle key, and updates live when a key
+changes. Pressing a bound key flashes its badge.
+
+By default the overlay appears as soon as the first keybind is created.
+`CreateWindow({ KeybindList = false })` keeps it hidden.
+`KeybindList = true` shows it immediately.
+
+```lua
+local List = Window:CreateKeybindList({
+    Title = "Keybinds",
+    Visible = true,
+    Position = UDim2.new(0, 16, 0.32, 0),
+    HideUnbound = false,     -- hide rows whose key is "None"
+    ShowToggleKey = true,    -- include the menu hotkey
+    ToggleKeyName = "Toggle Menu",
+    Collapsed = false,
+})
+
+List:SetVisible(false)
+List:Toggle()
+List:Collapse()              -- or Collapse(true / false)
+List:SetTitle("Binds")
+List:SetPosition(UDim2.fromOffset(24, 80))
+
+local fly = List:Add({ Name = "Fly", Key = "F" })
+fly:Set("G")                 -- display only; does not change a control
+fly:Remove()
+```
+
+`CreateKeybind({ Overlay = false })` skips that row.
+`OverlayName` is the label in the list when it should differ from `Name`.
+If the control has a `Flag`, that flag is the row id. `List:Set(flag, key)`
+updates the overlay label only — use the control's `Set` to change the real key.
+
+The header can be dragged. The chevron collapses the list to the title.
+The Themes tab has a "Keybind List" toggle when `CreateThemeTab` is used.
+`Window:SetKeybindListVisible(bool)` and `Window:GetKeybindList()` are the
+same overlay — there is only one per window.
 
 ## Flags
 
