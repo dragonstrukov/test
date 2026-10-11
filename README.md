@@ -119,9 +119,10 @@ print(toggle:Get())
 that lights while enabled, and stays synced with clicks and `Set()` calls.
 Keybinds can opt into activation tracking with `Mode = "Toggle"` or
 `Mode = "Hold"`; without `Mode`, a keybind remains a key picker. In either mode,
-a small circle next to the key lights while active; the key badge itself stays
-neutral. `Toggle` keeps the circle lit until the next press; `Hold` lights it
-only between key-down and key-up. `OnStateChanged(active)` receives state
+a small circle immediately to the right of the key badge lights while active;
+the key badge itself stays neutral. `Toggle` keeps the circle lit until the next
+press; `Hold` lights it only between key-down and key-up.
+`OnStateChanged(active)` receives state
 changes, while the existing `Callback(key)` still only fires when the assigned
 key changes. `DefaultActive` applies to toggle mode.
 

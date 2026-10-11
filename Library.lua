@@ -1588,9 +1588,9 @@ local KEY_ALIASES = {
                 entry.keyStroke.Color = THEME.Border
             end
             if entry.showIndicator then
-                entry.badge.Position = UDim2.new(1, -13, 0.5, 0)
+                entry.badge.Position = UDim2.new(1, -15, 0.5, 0)
                 entry.indicator.Position = UDim2.new(1, 0, 0.5, 0)
-                entry.nameLabel.Size = UDim2.new(1, -(width + 21), 1, 0)
+                entry.nameLabel.Size = UDim2.new(1, -(width + 23), 1, 0)
             else
                 entry.badge.Position = UDim2.new(1, 0, 0.5, 0)
                 entry.nameLabel.Size = UDim2.new(1, -(width + 8), 1, 0)
@@ -1604,7 +1604,7 @@ local KEY_ALIASES = {
 
         if entry.showIndicator then
             local lit = entry.showStatus and entry.active
-            entry.indicator.BackgroundColor3 = THEME[lit and "Accent" or "TextDim"]
+            entry.indicator.BackgroundColor3 = THEME[lit and "Accent" or "TextMuted"]
             if entry.indicatorStroke then
                 entry.indicatorStroke.Color = THEME[lit and "AccentSoft" or "Border"]
             end
@@ -1658,14 +1658,14 @@ local KEY_ALIASES = {
         indicator.Name = "Indicator"
         indicator.AnchorPoint = Vector2.new(1, 0.5)
         indicator.Position = UDim2.new(1, 0, 0.5, 0)
-        indicator.Size = UDim2.new(0, 8, 0, 8)
+        indicator.Size = UDim2.new(0, 10, 0, 10)
         indicator.BorderSizePixel = 0
         indicator.ZIndex = 63
         indicator.Parent = row
         bindColor(indicator, "BackgroundColor3", function()
-            return entry.showStatus and entry.active and "Accent" or "TextDim"
+            return entry.showStatus and entry.active and "Accent" or "TextMuted"
         end)
-        kbCorner(indicator, 4)
+        kbCorner(indicator, 5)
         local indicatorStroke = kbStroke(indicator, 1)
         bindColor(indicatorStroke, "Color", function()
             return entry.showStatus and entry.active and "AccentSoft" or "Border"

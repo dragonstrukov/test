@@ -1,5 +1,7 @@
+-- Demo points at the feature branch so it includes the latest overlay behavior.
+-- Switch /arena/0c851cbf-test/ to /main/ after the PR is merged.
 local Library = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/dragonstrukov/test/main/Library.lua"
+    "https://raw.githubusercontent.com/dragonstrukov/test/arena%2F0c851cbf-test/Library.lua"
 ))()
 
 local Window = Library:CreateWindow({
