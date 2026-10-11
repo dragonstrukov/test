@@ -115,13 +115,14 @@ print(toggle:Get())
 | `CreateLabel(text)` | — | Handle: only `Set(text)` |
 | `CreateDivider()` | Divider line | — |
 
-`CreateToggle({Overlay = true})` adds an `ON`/`OFF` status row to the keybind
-overlay and keeps it synced with clicks and `Set()` calls. Keybinds can opt into
-activation tracking with `Mode = "Toggle"` or `Mode = "Hold"`; without `Mode`, a
-keybind remains a key picker. The overlay status is `ON` while active and `OFF`
-otherwise. `OnStateChanged(active)` receives state changes, while the existing
-`Callback(key)` still only fires when the assigned key changes. `Hold` turns on
-at key-down and turns off at key-up; `DefaultActive` applies to toggle mode.
+`CreateToggle({Overlay = true})` adds a status marker to the keybind overlay
+that lights while enabled, and stays synced with clicks and `Set()` calls.
+Keybinds can opt into activation tracking with `Mode = "Toggle"` or
+`Mode = "Hold"`; without `Mode`, a keybind remains a key picker. In either mode,
+the key badge lights while active. `Toggle` stays lit until the next press;
+`Hold` lights only between key-down and key-up. `OnStateChanged(active)` receives
+state changes, while the existing `Callback(key)` still only fires when the
+assigned key changes. `DefaultActive` applies to toggle mode.
 
 Orion-style aliases are available: `AddToggle`, `AddButton`, `AddSlider`,
 `AddDropdown`, `AddTextbox`, `AddBind`, `AddColorPicker`, `AddLabel`, etc.
@@ -130,8 +131,8 @@ Orion-style aliases are available: `AddToggle`, `AddButton`, `AddSlider`,
 
 A small draggable overlay stays on screen after the menu is hidden. It lists
 every `CreateKeybind` plus the menu toggle key, and updates live when a key
-changes. Pressing a bound key flashes its badge. Toggle controls can also show
-live `ON`/`OFF` state rows, and `Mode = "Hold"` keybinds show `ON` only while
+changes. Pressing a bound key lights its key badge. Toggle controls can also
+show a small state indicator, while `Mode = "Hold"` keybinds light only while
 the key is held.
 
 By default the overlay appears as soon as the first keybind or overlay-enabled
@@ -160,7 +161,7 @@ fly:Set("G")                 -- display only; does not change a control
 fly:Remove()
 
 local status = List:AddStatus({ Name = "Fly", Active = false })
-status:Set(true)              -- update the ON/OFF badge
+status:Set(true)              -- light the status dot
 status:Remove()
 ```
 

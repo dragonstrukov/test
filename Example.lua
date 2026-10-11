@@ -26,13 +26,16 @@ local MoveTab = Window:CreateTab({ Name = "Movement", Icon = "move" })
 local Fight = CombatTab:CreateSection("Fighting", 1)
 local Target = CombatTab:CreateSection("Target", 2)
 
+local auraKeybind
 local aura = Fight:CreateToggle({
     Name = "Attack Aura",
     Description = "Automatically attacks nearby players",
     Default = false,
     Flag = "AttackAura",
-    Overlay = true,
     Callback = function(value)
+        if auraKeybind then
+            auraKeybind:SetActive(value)
+        end
         print("Aura:", value)
     end,
 })
@@ -78,11 +81,12 @@ Target:CreateInput({
     end,
 })
 
-Target:CreateKeybind({
+auraKeybind = Target:CreateKeybind({
     Name = "Aura Key",
     Description = "Press to change, Esc to clear",
     Default = "G",
     Flag = "AuraKey",
+    OverlayName = "Attack Aura",
     Mode = "Toggle",
     OnStateChanged = function(active)
         aura:Set(active)
@@ -145,6 +149,7 @@ Speed:CreateKeybind({
     Description = "Shown in the Keybinds overlay",
     Default = "V",
     Flag = "SpeedKey",
+    OverlayName = "Speed",
     Mode = "Hold",
     OnStateChanged = function(active)
         print("Speed hold active:", active)
@@ -167,7 +172,7 @@ Window:CreateThemeTab("Themes", "palette")
 
 Window:Notify({
     Title = "Loaded",
-    Content = "The overlay shows feature and hold-key status.",
+    Content = "Toggle binds stay lit; hold binds light only while pressed.",
     Duration = 3,
     Icon = "keyboard",
 })
