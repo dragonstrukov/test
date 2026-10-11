@@ -102,18 +102,26 @@ print(toggle:Get())
 
 | Control | Options | Callback |
 |---|---|---|
-| `CreateToggle` | `Default` (bool) | `function(value)` |
+| `CreateToggle` | `Default` (bool), `Overlay` (bool), `OverlayName` | `function(value)` |
 | `CreateButtonRow(name, {{Text, Callback}, ...})` | 1–2 buttons in a row, returns an array of `{Button, Fire, SetText}` handles | — |
 | `CreateButton({Name, Callback})` | Single button, returns `{Button, Fire, SetText}` | — |
 | `CreateSlider` | `Min`, `Max`, `Default`, `Decimals` | `function(value)` |
 | `CreateDropdown` | `Options` (array of strings or `{Text, Icon}`), `Default` (text or index) | `function(text, index)` |
 | `CreateMultiDropdown` | `Options`, `Default` (`{"A"}` or `{A = true}`) | `function(picked)` — array of selected |
 | `CreateInput` | `Placeholder`, `Default` | `function(text)` — on typing |
-| `CreateKeybind` | `Default` (e.g. `"G"`, `"None"`), `Overlay` (bool), `OverlayName` | `function(key)` |
+| `CreateKeybind` | `Default`, `Overlay`, `OverlayName`, `Mode` (`"Toggle"` / `"Hold"`), `DefaultActive` | `Callback(key)` when the bind changes; `OnStateChanged(active)` on press/release or toggle |
 | `CreateColorPicker` | `Default` (Color3) | `function(color)` |
 | `CreateProgressBar` | `Default` (0–100), `Interactive` (draggable) | `function(value)` |
 | `CreateLabel(text)` | — | Handle: only `Set(text)` |
 | `CreateDivider()` | Divider line | — |
+
+`CreateToggle({Overlay = true})` adds an `ON`/`OFF` status row to the keybind
+overlay and keeps it synced with clicks and `Set()` calls. Keybinds can opt into
+activation tracking with `Mode = "Toggle"` or `Mode = "Hold"`; without `Mode`, a
+keybind remains a key picker. The overlay status is `ON` while active and `OFF`
+otherwise. `OnStateChanged(active)` receives state changes, while the existing
+`Callback(key)` still only fires when the assigned key changes. `Hold` turns on
+at key-down and turns off at key-up; `DefaultActive` applies to toggle mode.
 
 Orion-style aliases are available: `AddToggle`, `AddButton`, `AddSlider`,
 `AddDropdown`, `AddTextbox`, `AddBind`, `AddColorPicker`, `AddLabel`, etc.
@@ -122,10 +130,12 @@ Orion-style aliases are available: `AddToggle`, `AddButton`, `AddSlider`,
 
 A small draggable overlay stays on screen after the menu is hidden. It lists
 every `CreateKeybind` plus the menu toggle key, and updates live when a key
-changes. Pressing a bound key flashes its badge.
+changes. Pressing a bound key flashes its badge. Toggle controls can also show
+live `ON`/`OFF` state rows, and `Mode = "Hold"` keybinds show `ON` only while
+the key is held.
 
-By default the overlay appears as soon as the first keybind is created.
-`CreateWindow({ KeybindList = false })` keeps it hidden.
+By default the overlay appears as soon as the first keybind or overlay-enabled
+toggle is created. `CreateWindow({ KeybindList = false })` keeps it hidden.
 `KeybindList = true` shows it immediately.
 
 ```lua
@@ -133,7 +143,7 @@ local List = Window:CreateKeybindList({
     Title = "Keybinds",
     Visible = true,
     Position = UDim2.new(0, 16, 0.32, 0),
-    HideUnbound = false,     -- hide rows whose key is "None"
+    HideUnbound = false,     -- set true to hide keybinds whose key is "None"
     ShowToggleKey = true,    -- include the menu hotkey
     ToggleKeyName = "Toggle Menu",
     Collapsed = false,
@@ -148,12 +158,25 @@ List:SetPosition(UDim2.fromOffset(24, 80))
 local fly = List:Add({ Name = "Fly", Key = "F" })
 fly:Set("G")                 -- display only; does not change a control
 fly:Remove()
+
+local status = List:AddStatus({ Name = "Fly", Active = false })
+status:Set(true)              -- update the ON/OFF badge
+status:Remove()
 ```
+
+`CreateToggle({ Overlay = true })` registers its state automatically. For a
+keybind, `Mode = "Toggle"` flips the active state each press, while
+`Mode = "Hold"` is active only between key-down and key-up. Both can use
+`OnStateChanged = function(active) ... end`; their control handles also provide
+`SetActive(bool)`, `GetActive()`, and `GetMode()`. The regular `Callback(key)`
+continues to report key assignment changes.
 
 `CreateKeybind({ Overlay = false })` skips that row.
 `OverlayName` is the label in the list when it should differ from `Name`.
 If the control has a `Flag`, that flag is the row id. `List:Set(flag, key)`
 updates the overlay label only — use the control's `Set` to change the real key.
+Use `List:SetActive(id, bool)` to update a status row by id. Status-only rows
+aren't filtered by `HideUnbound`.
 
 The header can be dragged. The chevron collapses the list to the title.
 The Themes tab has a "Keybind List" toggle when `CreateThemeTab` is used.

@@ -1543,10 +1543,11 @@ local KEY_ALIASES = {
     local kbAutoShow = options.KeybindList == nil
     local kbToggleHandle = nil
     local kbApplyingVisible = false
+    local activeKeybindCaptures = 0
 
     local function entryVisible(entry)
         if entry.hidden then return false end
-        if kbHideUnbound and (entry.key == "None" or entry.key == "") then
+        if kbHideUnbound and entry.showKey and (entry.key == "None" or entry.key == "") then
             return false
         end
         return true
@@ -1572,13 +1573,39 @@ local KEY_ALIASES = {
     local function renderKeybindEntry(entry)
         if not entry or not entry.row then return end
         entry.nameLabel.Text = entry.name
-        local shown = formatKeyName(entry.key)
-        entry.badge.Text = shown
-        local width = keyBadgeWidth(shown)
-        entry.badge.Size = UDim2.new(0, width, 0, 16)
-        entry.nameLabel.Size = UDim2.new(1, -(width + 8), 1, 0)
-        local token = (entry.key == "None" or entry.key == "") and "TextDim" or "Accent"
-        bindColor(entry.badge, "TextColor3", token)
+        entry.badge.Visible = entry.showKey
+        entry.statusBadge.Visible = entry.showStatus
+
+        local keyWidth = 0
+        if entry.showKey then
+            local shown = formatKeyName(entry.key)
+            entry.badge.Text = shown
+            keyWidth = keyBadgeWidth(shown)
+            entry.badge.Size = UDim2.new(0, keyWidth, 0, 16)
+            local token = (entry.key == "None" or entry.key == "") and "TextDim" or "Accent"
+            bindColor(entry.badge, "TextColor3", token)
+        end
+
+        local statusWidth = 0
+        if entry.showStatus then
+            statusWidth = 32
+            entry.statusBadge.Text = entry.active and "ON" or "OFF"
+            entry.statusBadge.BackgroundColor3 = THEME[entry.active and "Accent" or "BadgeBg"]
+            entry.statusBadge.TextColor3 = THEME[entry.active and "KnobOn" or "TextMuted"]
+        end
+
+        if entry.showKey and entry.showStatus then
+            entry.statusBadge.Position = UDim2.new(1, -(keyWidth + 4), 0.5, 0)
+            entry.nameLabel.Size = UDim2.new(1, -(keyWidth + statusWidth + 16), 1, 0)
+        elseif entry.showKey then
+            entry.nameLabel.Size = UDim2.new(1, -(keyWidth + 8), 1, 0)
+        elseif entry.showStatus then
+            entry.statusBadge.Position = UDim2.new(1, 0, 0.5, 0)
+            entry.nameLabel.Size = UDim2.new(1, -(statusWidth + 8), 1, 0)
+        else
+            entry.nameLabel.Size = UDim2.new(1, 0, 1, 0)
+        end
+
         refreshKeybindEmpty()
     end
 
@@ -1621,9 +1648,31 @@ local KEY_ALIASES = {
         kbCorner(badge, 3)
         kbStroke(badge)
 
+        local statusBadge = Instance.new("TextLabel")
+        statusBadge.Name = "Status"
+        statusBadge.AnchorPoint = Vector2.new(1, 0.5)
+        statusBadge.Position = UDim2.new(1, 0, 0.5, 0)
+        statusBadge.Size = UDim2.new(0, 32, 0, 16)
+        statusBadge.BorderSizePixel = 0
+        statusBadge.Font = Enum.Font.GothamBold
+        statusBadge.TextSize = 9
+        statusBadge.TextXAlignment = Enum.TextXAlignment.Center
+        statusBadge.TextTruncate = Enum.TextTruncate.AtEnd
+        statusBadge.ZIndex = 63
+        statusBadge.Parent = row
+        bindColor(statusBadge, "BackgroundColor3", function()
+            return entry.active and "Accent" or "BadgeBg"
+        end)
+        bindColor(statusBadge, "TextColor3", function()
+            return entry.active and "KnobOn" or "TextMuted"
+        end)
+        kbCorner(statusBadge, 3)
+        kbStroke(statusBadge)
+
         entry.row = row
         entry.nameLabel = nameLabel
         entry.badge = badge
+        entry.statusBadge = statusBadge
         renderKeybindEntry(entry)
     end
 
@@ -1642,6 +1691,11 @@ local KEY_ALIASES = {
             if info.Name ~= nil then existing.name = tostring(info.Name) end
             if info.Key ~= nil then existing.key = tostring(info.Key) end
             if info.Hidden ~= nil then existing.hidden = info.Hidden and true or false end
+            if info.Kind ~= nil then existing.kind = tostring(info.Kind) end
+            if info.ShowKey ~= nil then existing.showKey = info.ShowKey and true or false end
+            if info.ShowStatus ~= nil then existing.showStatus = info.ShowStatus and true or false end
+            if info.Active ~= nil then existing.active = info.Active and true or false end
+            if info.Mode ~= nil then existing.mode = tostring(info.Mode) end
             renderKeybindEntry(existing)
             return id
         end
@@ -1655,6 +1709,11 @@ local KEY_ALIASES = {
             key = tostring(info.Key or info.Default or "None"),
             order = info.Order or kbOrder,
             hidden = info.Hidden and true or false,
+            kind = tostring(info.Kind or "keybind"),
+            showKey = info.ShowKey ~= false,
+            showStatus = info.ShowStatus and true or false,
+            active = info.Active and true or false,
+            mode = info.Mode,
         }
         kbById[id] = entry
         table.insert(kbEntries, entry)
@@ -1668,6 +1727,29 @@ local KEY_ALIASES = {
         if key ~= nil then entry.key = tostring(key) end
         if name ~= nil then entry.name = tostring(name) end
         renderKeybindEntry(entry)
+    end
+
+    local function updateOverlayStatus(id, active, name)
+        local entry = kbById[tostring(id)]
+        if not entry then return end
+        if active ~= nil then entry.active = active == true end
+        if name ~= nil then entry.name = tostring(name) end
+        renderKeybindEntry(entry)
+    end
+
+    local function registerOverlayStatus(info)
+        info = info or {}
+        return registerOverlayKeybind({
+            Id = info.Id or info.Flag,
+            Name = info.Name or info.Title or "Feature",
+            Key = "None",
+            Kind = "status",
+            ShowKey = false,
+            ShowStatus = true,
+            Active = info.Active == true,
+            Hidden = info.Hidden,
+            Order = info.Order,
+        })
     end
 
     local function removeOverlayKeybind(id)
@@ -1814,7 +1896,7 @@ local KEY_ALIASES = {
     end
 
     local function flashKeybind(entry)
-        if not entry.badge or not entry.row or not entry.row.Visible then return end
+        if not entry.showKey or not entry.badge or not entry.row or not entry.row.Visible then return end
         tweenColors(entry.badge, TWEEN_FAST, {BackgroundColor3 = "Accent", TextColor3 = "KnobOn"}):Play()
         task.delay(0.16, function()
             if not entry.badge or not entry.badge.Parent then return end
@@ -1829,7 +1911,7 @@ local KEY_ALIASES = {
         if not KeybindHolder.Visible or kbCollapsed then return end
         local pressed = input.KeyCode.Name
         for _, entry in ipairs(kbEntries) do
-            if entry.key == pressed and entry.row and entry.row.Visible then
+            if entry.showKey and entry.key == pressed and entry.row and entry.row.Visible then
                 flashKeybind(entry)
             end
         end
@@ -1852,6 +1934,25 @@ local KEY_ALIASES = {
                 return entry and entry.key or "None"
             end,
         }
+    end
+
+    local function overlayStatusHandle(id)
+        local handle = {Id = id}
+        handle.Set = function(active, maybeActive)
+            if maybeActive ~= nil then active = maybeActive end
+            updateOverlayStatus(id, active)
+        end
+        handle.SetActive = handle.Set
+        handle.SetName = function(name, maybeName)
+            if maybeName ~= nil then name = maybeName end
+            updateOverlayStatus(id, nil, name)
+        end
+        handle.Remove = function() removeOverlayKeybind(id) end
+        handle.Get = function()
+            local entry = kbById[id]
+            return entry and entry.active or false
+        end
+        return handle
     end
 
     local KeybindListApi = {}
@@ -1904,6 +2005,10 @@ local KEY_ALIASES = {
         updateOverlayKeybind(id, key)
     end
 
+    function KeybindListApi:SetActive(id, active)
+        updateOverlayStatus(id, active)
+    end
+
     function KeybindListApi:Configure(opts)
         kbAutoShow = false
         applyKeybindListOptions(opts)
@@ -1913,6 +2018,18 @@ local KEY_ALIASES = {
         if kbAutoShow then
             setKeybindListVisible(true)
         end
+    end
+
+    function KeybindListApi:AddStatus(entryOptions)
+        entryOptions = entryOptions or {}
+        local id = registerOverlayStatus({
+            Id = entryOptions.Id or entryOptions.Flag,
+            Name = entryOptions.Name or entryOptions.Title or "Feature",
+            Active = entryOptions.Active == true,
+            Hidden = entryOptions.Hidden,
+        })
+        noteKeybindForOverlay()
+        return overlayStatusHandle(id)
     end
 
     local STARTUP_THEME = nil
@@ -2357,7 +2474,8 @@ local KEY_ALIASES = {
         return handle
     end
 
-    local function addToggle(card, name, description, defaultState, callback)
+    local function addToggle(card, name, description, defaultState, callback, extra)
+        extra = extra or {}
         local row = createRow(card, name, description, {sideWidth = 32})
 
         local switch = Instance.new("TextButton")
@@ -2379,6 +2497,15 @@ local KEY_ALIASES = {
         addCorner(knob, 6)
 
         local isToggled = defaultState
+        local overlayId = nil
+        if extra.Show then
+            overlayId = registerOverlayStatus({
+                Id = extra.Id,
+                Name = extra.DisplayName or name,
+                Active = isToggled,
+            })
+            noteKeybindForOverlay()
+        end
 
         local function applyToggle(value, fire)
             isToggled = value and true or false
@@ -2389,6 +2516,9 @@ local KEY_ALIASES = {
             tweenColors(switch, TWEEN_FAST, {BackgroundColor3 = targetColor}):Play()
             tweenColors(knob, TWEEN_FAST, {BackgroundColor3 = targetKnobColor, Position = targetPos}):Play()
 
+            if overlayId then
+                updateOverlayStatus(overlayId, isToggled)
+            end
             if fire and callback then
                 callback(isToggled)
             end
@@ -2909,12 +3039,23 @@ local KEY_ALIASES = {
         local listening = false
         local listener
         local currentKey = defaultKey or "None"
+        local requestedMode = string.lower(tostring(extra.Mode or ""))
+        local activationMode = (requestedMode == "hold" or requestedMode == "toggle")
+            and (requestedMode == "hold" and "Hold" or "Toggle") or nil
+        local isActive = activationMode == "Toggle" and extra.DefaultActive == true or false
+        local onStateChanged = extra.OnStateChanged or extra.StateCallback or extra.ActiveCallback
+        if type(onStateChanged) ~= "function" then onStateChanged = nil end
         local overlayId = nil
         if extra.Show ~= false then
             overlayId = registerOverlayKeybind({
                 Id = extra.Id,
                 Name = extra.DisplayName or name,
                 Key = currentKey,
+                Kind = "keybind",
+                ShowKey = true,
+                ShowStatus = activationMode ~= nil,
+                Active = isActive,
+                Mode = activationMode,
             })
             noteKeybindForOverlay()
         end
@@ -2922,15 +3063,61 @@ local KEY_ALIASES = {
         local function syncOverlay()
             if overlayId then
                 updateOverlayKeybind(overlayId, currentKey)
+                if activationMode then
+                    updateOverlayStatus(overlayId, isActive)
+                end
             end
         end
 
-        resetBtn.MouseButton1Click:Connect(function()
+        local function applyActive(value, fire)
+            local nextActive = value == true
+            if nextActive == isActive then return end
+            isActive = nextActive
+            if overlayId and activationMode then
+                updateOverlayStatus(overlayId, isActive)
+            end
+            if fire and onStateChanged then
+                onStateChanged(isActive)
+            end
+        end
+
+        local function stopListening()
+            if listening then
+                listening = false
+                activeKeybindCaptures = math.max(0, activeKeybindCaptures - 1)
+            end
             if listener then
                 listener:Disconnect()
                 listener = nil
             end
-            listening = false
+        end
+
+        if activationMode then
+            trackConn(UserInputService.InputBegan:Connect(function(input, processed)
+                if isClosed or processed or listening or activeKeybindCaptures > 0 then return end
+                if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+                if currentKey == "None" or input.KeyCode.Name ~= currentKey then return end
+                if activationMode == "Hold" then
+                    applyActive(true, true)
+                else
+                    applyActive(not isActive, true)
+                end
+            end))
+            if activationMode == "Hold" then
+                trackConn(UserInputService.InputEnded:Connect(function(input)
+                    if isClosed or input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+                    if currentKey == "None" or input.KeyCode.Name ~= currentKey then return end
+                    applyActive(false, true)
+                end))
+                trackConn(UserInputService.WindowFocusReleased:Connect(function()
+                    applyActive(false, true)
+                end))
+            end
+        end
+
+        resetBtn.MouseButton1Click:Connect(function()
+            stopListening()
+            applyActive(false, true)
             currentKey = "None"
             badge.Text = "None"
             bindColor(badge, "TextColor3", "TextMuted")
@@ -2940,27 +3127,27 @@ local KEY_ALIASES = {
 
         badge.MouseButton1Click:Connect(function()
             if listening then
-                if listener then
-                    listener:Disconnect()
-                    listener = nil
-                end
+                stopListening()
                 badge.Text = currentKey
                 bindColor(badge, "TextColor3", "TextMuted")
-                listening = false
                 return
             end
             listening = true
+            activeKeybindCaptures = activeKeybindCaptures + 1
             badge.Text = "..."
             bindColor(badge, "TextColor3", "Accent")
             listener = trackConn(UserInputService.InputBegan:Connect(function(input, processed)
-                if processed then return end
+                if processed or isClosed then return end
                 if input.UserInputType == Enum.UserInputType.Keyboard then
                     local key = input.KeyCode.Name
-                    currentKey = (key == "Escape") and "None" or key
+                    local newKey = (key == "Escape") and "None" or key
+                    stopListening()
+                    if currentKey ~= newKey then
+                        applyActive(false, true)
+                    end
+                    currentKey = newKey
                     badge.Text = currentKey
                     bindColor(badge, "TextColor3", "TextMuted")
-                    listening = false
-                    listener:Disconnect()
                     syncOverlay()
                     if callback then callback(badge.Text) end
                 end
@@ -2969,13 +3156,21 @@ local KEY_ALIASES = {
 
         return wrapHandle({
             Set = function(value)
-                currentKey = tostring(value)
+                stopListening()
+                local newKey = tostring(value or "None")
+                if currentKey ~= newKey then
+                    applyActive(false, true)
+                end
+                currentKey = newKey
                 badge.Text = currentKey
                 bindColor(badge, "TextColor3", "TextMuted")
                 syncOverlay()
                 if callback then callback(currentKey) end
             end,
             Get = function() return currentKey end,
+            SetActive = function(value) applyActive(value, true) end,
+            GetActive = function() return isActive end,
+            GetMode = function() return activationMode or "None" end,
         })
     end
 
@@ -4196,8 +4391,16 @@ local KEY_ALIASES = {
                     if tOpts.Flag ~= nil then
                         Library.Flags[tOpts.Flag] = default
                     end
+                    local showInOverlay = tOpts.Overlay == true
+                    if tOpts.Overlay == nil then
+                        showInOverlay = tOpts.ShowInOverlay == true
+                    end
                     return addToggle(body, tOpts.Name or tOpts.Title or "Toggle",
-                        descOf(tOpts), default, flagCallback(tOpts.Flag, tOpts.Callback))
+                        descOf(tOpts), default, flagCallback(tOpts.Flag, tOpts.Callback), {
+                            Id = tOpts.Flag,
+                            Show = showInOverlay,
+                            DisplayName = tOpts.OverlayName,
+                        })
                 end
 
                 function Section:CreateButtonRow(rOpts, buttonsMaybe)
@@ -4344,11 +4547,15 @@ local KEY_ALIASES = {
                         Library.Flags[kOpts.Flag] = tostring(default)
                     end
                     local showInOverlay = kOpts.Overlay ~= false and kOpts.ShowInOverlay ~= false
+                    local stateCallback = kOpts.OnStateChanged or kOpts.StateCallback or kOpts.ActiveCallback
                     return addKeybind(body, kOpts.Name or kOpts.Title or "Keybind",
                         descOf(kOpts), tostring(default), flagCallback(kOpts.Flag, kOpts.Callback), {
                             Id = kOpts.Flag,
                             Show = showInOverlay,
                             DisplayName = kOpts.OverlayName,
+                            Mode = kOpts.Mode or (kOpts.Hold == true and "Hold"),
+                            DefaultActive = kOpts.DefaultActive,
+                            OnStateChanged = stateCallback,
                         })
                 end
                 Section.CreateBind = Section.CreateKeybind

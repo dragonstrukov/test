@@ -11,10 +11,12 @@ local Window = Library:CreateWindow({
 })
 
 local Keybinds = Window:CreateKeybindList({
-    Title = "Keybinds",
+    Title = "Keybinds + Status",
     Visible = true,
     Position = UDim2.new(0, 16, 0.32, 0),
 })
+
+local actionStatus = Keybinds:AddStatus({ Name = "Actions", Active = false })
 
 local Features = Window:CreateCategory("Features")
 
@@ -29,6 +31,7 @@ local aura = Fight:CreateToggle({
     Description = "Automatically attacks nearby players",
     Default = false,
     Flag = "AttackAura",
+    Overlay = true,
     Callback = function(value)
         print("Aura:", value)
     end,
@@ -80,6 +83,10 @@ Target:CreateKeybind({
     Description = "Press to change, Esc to clear",
     Default = "G",
     Flag = "AuraKey",
+    Mode = "Toggle",
+    OnStateChanged = function(active)
+        aura:Set(active)
+    end,
     Callback = function(key)
         print("Key:", key)
     end,
@@ -106,8 +113,14 @@ Target:CreateProgressBar({
 })
 
 Fight:CreateButtonRow("Actions", {
-    { Text = "Start", Callback = function() print("Start!") end },
-    { Text = "Stop", Callback = function() print("Stop!") end },
+    { Text = "Start", Callback = function()
+        actionStatus:Set(true)
+        print("Start!")
+    end },
+    { Text = "Stop", Callback = function()
+        actionStatus:Set(false)
+        print("Stop!")
+    end },
 })
 
 MoveTab:CreateSection("Speed", 1):CreateButton({
@@ -132,6 +145,10 @@ Speed:CreateKeybind({
     Description = "Shown in the Keybinds overlay",
     Default = "V",
     Flag = "SpeedKey",
+    Mode = "Hold",
+    OnStateChanged = function(active)
+        print("Speed hold active:", active)
+    end,
     Callback = function(key)
         print("Speed key:", key)
     end,
@@ -150,7 +167,7 @@ Window:CreateThemeTab("Themes", "palette")
 
 Window:Notify({
     Title = "Loaded",
-    Content = "Keybinds overlay is on the left.",
+    Content = "The overlay shows feature and hold-key status.",
     Duration = 3,
     Icon = "keyboard",
 })
