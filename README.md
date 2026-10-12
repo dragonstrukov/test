@@ -160,11 +160,15 @@ Field names are matched case-insensitively with common aliases:
 | `Date` | `date`, `time`, `created`, `timestamp` (used by the "New" sort) |
 | `Tags` | `tags` (also matched by category chips and search) |
 | `Data` | `data`, `payload`, `script`, `url`, `link`, `code` — whatever your callback needs |
+| `Fit` | `fit`, `contain` — show the picture with air around it (icons) instead of cropping it |
 
 The original object is kept in `item.Raw`. Images can be `rbxassetid://…`,
 `rbxthumb://…`, a bare asset id, or an `https://` link (downloaded once and
 cached through `getcustomasset` on executors that support it). Without an image
-the card shows a placeholder icon (`PlaceholderIcon`).
+the card shows a placeholder icon (`PlaceholderIcon`). `ImageScaleType = "Fit"`
+switches the whole grid from crop to fit. If `Source` and `Items` are both
+given, the items are shown immediately and replaced when the API answers; if
+the request fails they stay on screen.
 
 Handle methods:
 

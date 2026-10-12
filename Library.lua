@@ -3816,9 +3816,13 @@ local KEY_ALIASES = {
     local BROWSE_IMAGE_CACHE = {}
     local BROWSE_CACHE_DIR = "UILibrary/cache"
 
+    local function looksLikeHttpError(body)
+        return string.match(body, "^%s*404") ~= nil or string.match(body, "^%s*<!DOCTYPE") ~= nil
+    end
+
     local function httpGet(url)
         local ok, body = pcall(function() return game:HttpGet(url, true) end)
-        if ok and type(body) == "string" and #body > 0 then return body end
+        if ok and type(body) == "string" and #body > 0 and not looksLikeHttpError(body) then return body end
         local req = (type(request) == "function" and request)
             or (type(http_request) == "function" and http_request)
             or (type(syn) == "table" and type(syn.request) == "function" and syn.request)
@@ -3826,7 +3830,9 @@ local KEY_ALIASES = {
         if req then
             local ok2, res = pcall(req, {Url = url, Method = "GET"})
             if ok2 and type(res) == "table" and type(res.Body) == "string" and #res.Body > 0 then
-                return res.Body
+                local code = tonumber(res.StatusCode) or 200
+                if code >= 200 and code < 300 then return res.Body end
+                return nil, "HTTP " .. tostring(code)
             end
         end
         local ok3, body3 = pcall(HttpService.GetAsync, HttpService, url)
@@ -3914,6 +3920,7 @@ local KEY_ALIASES = {
             table.insert(item.Images, single)
         end
         item.Image = item.Images[1]
+        item.Fit = pickField(raw, "Fit", "fit", "Contain", "contain") and true or false
         item.Author = pickField(raw, "Author", "author", "Creator", "creator", "Owner", "owner", "By", "by")
         item.Date = tonumber(pickField(raw, "Date", "date", "Time", "time", "Created", "created", "Timestamp", "timestamp", "Updated", "updated")) or index
         item.Tags = pickField(raw, "Tags", "tags")
@@ -3971,6 +3978,8 @@ local KEY_ALIASES = {
         local source = opts.Source or opts.Url or opts.Api or opts.API
         local fetcher = opts.Fetch or opts.Loader
         local placeholderIcon = opts.PlaceholderIcon or "image"
+        local imageScale = (tostring(opts.ImageScaleType or opts.ImageScale or "Crop"):lower() == "fit")
+            and Enum.ScaleType.Fit or Enum.ScaleType.Crop
         local autoCategories = (opts.Categories == nil)
 
         -- sort modes: {"Hot", "New"} or {{Name = "Hot", Sort = fn, Icon = "zap"}, ...}
@@ -4246,10 +4255,15 @@ local KEY_ALIASES = {
             local count = #sources
             for i, src in ipairs(sources) do
                 local img = Instance.new("ImageLabel")
-                img.Size = UDim2.new(1 / count, count > 1 and -1 or 0, 1, 0)
-                img.Position = UDim2.new((i - 1) / count, (i > 1) and 1 or 0, 0, 0)
+                if item.Fit then -- icon-like pictures: keep some air around them
+                    img.Size = UDim2.new(1 / count, -24, 1, -28)
+                    img.Position = UDim2.new((i - 1) / count, 12, 0, 14)
+                else
+                    img.Size = UDim2.new(1 / count, count > 1 and -1 or 0, 1, 0)
+                    img.Position = UDim2.new((i - 1) / count, (i > 1) and 1 or 0, 0, 0)
+                end
                 img.BackgroundTransparency = 1
-                img.ScaleType = Enum.ScaleType.Crop
+                img.ScaleType = item.Fit and Enum.ScaleType.Fit or imageScale
                 img.ZIndex = 6
                 img.Parent = thumb
                 local immediate = (type(src) == "string" and string.match(src, "^https?://")) and nil or resolveBrowseImage(src)
@@ -4615,8 +4629,12 @@ local KEY_ALIASES = {
                     setItems(result)
                     if opts.OnLoad then task.spawn(opts.OnLoad, state.Items) end
                 else
-                    setItems({})
-                    setStatus("Failed to load")
+                    -- keep whatever is already shown (e.g. `Items` passed as a fallback)
+                    if #state.Items == 0 then
+                        setStatus("Failed to load")
+                    else
+                        applyFilters(true)
+                    end
                     Notify({
                         Title = opts.Name or "Browse",
                         Content = "Failed to load: " .. tostring(result),

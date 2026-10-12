@@ -147,17 +147,35 @@ Speed:CreateSlider({
 
 -- Browse: a gallery of universal scripts loaded from a JSON API, so the list
 -- is the same for every user and can be updated without touching the script.
--- JSON format: {"items": [{"name", "category", "rating", "author", "image"/"images", "url"}, ...]}
+-- JSON format: {"items": [{"name", "category", "rating", "author", "image", "url"}, ...]}
+-- (see browse.json in the repo).
+local BROWSE_API = "https://raw.githubusercontent.com/dragonstrukov/test/arena/a5c5a8e6-test/browse.json"
+-- after merging to main: "https://raw.githubusercontent.com/dragonstrukov/test/main/browse.json"
+
+-- Shown right away and kept if the API is unreachable (offline / 404).
+local BROWSE_FALLBACK = {
+    { Name = "Example Hub",   Category = "Universal", Rating = 96, Author = "dragonstrukov", Image = "rbxassetid://81973586053257",  Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+    { Name = "Attack Aura",   Category = "Combat",    Rating = 88, Author = "dragonstrukov", Image = "rbxassetid://130551565616516", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+    { Name = "Walk Speed",    Category = "Movement",  Rating = 79, Author = "dragonstrukov", Image = "rbxassetid://110273524101447", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+    { Name = "Player ESP",    Category = "Visuals",   Rating = 91, Author = "dragonstrukov", Image = "rbxassetid://100033680381365", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+    { Name = "Anti AFK",      Category = "Misc",      Rating = 99, Author = "dragonstrukov", Image = "rbxassetid://98083086936965",  Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+    { Name = "Noclip",        Category = "Movement",  Rating = 77, Author = "dragonstrukov", Image = "rbxassetid://113822048130017", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+}
+
 Window:CreateCategory("Library")
 local Browse = Window:CreateBrowseTab({
     Name = "Browse",
     Icon = "store",
-    Source = "https://raw.githubusercontent.com/dragonstrukov/test/main/browse.json",
+    Source = BROWSE_API,          -- JSON API; remove it to use only Items
+    Items = BROWSE_FALLBACK,      -- optional: shown until the API answers
     Categories = { "Universal", "Combat", "Movement", "Visuals", "Misc" }, -- omit to build them from the items
     SortModes = { "Hot", "New", "A-Z" },
     PageSize = 9,
     Columns = 3,
     SearchPlaceholder = "Search scripts...",
+    OnLoad = function(items)
+        Window:Notify({ Title = "Browse", Content = #items .. " scripts loaded from API", Icon = "circle-check", Duration = 2 })
+    end,
     Callback = function(item)
         -- item.Name, item.Category, item.Rating, item.Author, item.Data (= "url"), item.Raw (= original JSON)
         if not item.Data then return end
@@ -173,7 +191,7 @@ local Browse = Window:CreateBrowseTab({
     end,
 })
 
--- The same panel can also be filled from code (no API):
+-- The same panel can also be driven from code:
 -- Browse:SetItems({ { Name = "Local script", Category = "Misc", Rating = 50, Data = "https://..." } })
 -- Browse:Search("esp") / Browse:SetCategory("Visuals") / Browse:SetSort("New") / Browse:Refresh()
 
