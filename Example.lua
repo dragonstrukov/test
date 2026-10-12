@@ -225,6 +225,81 @@ local Browse = Window:CreateBrowseTab({
     Callback = runScript, -- used when there is no Details (direct click) or by the default "Select" button
 })
 
+-- Browse as a SEPARATE WINDOW (catalog popup) instead of a sidebar tab.
+-- It stays hidden until Browse:Open() is called from a button / toggle / hotkey.
+local catalogCache
+local Catalog = Window:CreateBrowseWindow({
+    Name = "Catalog",
+    Description = "Builds Gallery",
+    Width = 620, Height = 470,
+    ToggleKey = Enum.KeyCode.B,                      -- optional hotkey
+    Tabs = { "All", { Name = "Tab 1", Id = "1" }, { Name = "Tab 2", Id = "2" } }, -- source switch in the header
+    Categories = { "Universal", "Combat", "Movement", "Visuals", "Misc" },
+    SortModes = { "Hot", "New", "A-Z" },
+    PageSize = 9, Columns = 3,
+    Details = true,                                  -- default details dialog, "Select" -> Callback
+    Callback = runScript,
+
+    -- SERVER-SIDE mode: Fetch receives page / query / sort / category / tab and returns
+    -- ONE page of items + the number of pages + the total. Every search, page flip, sort
+    -- or tab switch calls it again - exactly how a paged API (…/builds?page=2&q=jet) works.
+    Fetch = function(ctx)
+        -- Real API: local body = game:HttpGet(("https://example.com/api/builds?page=%d&pageSize=%d&q=%s&sort=%s")
+        --     :format(ctx.Page, ctx.PageSize, game:GetService("HttpService"):UrlEncode(ctx.Query), ctx.Sort))
+        -- local data = game:GetService("HttpService"):JSONDecode(body)
+        -- return data.items, math.ceil(data.total / ctx.PageSize), data.total
+        if not catalogCache then
+            local ok, decoded = pcall(function()
+                return game:GetService("HttpService"):JSONDecode(game:HttpGet("https://raw.githubusercontent.com/dragonstrukov/test/main/browse.json"))
+            end)
+            catalogCache = (ok and type(decoded) == "table" and decoded.items) or Browse:GetItems() -- offline fallback
+        end
+        local function field(raw, a, b) return raw[a] ~= nil and raw[a] or raw[b] end
+        local list = {}
+        for i, raw in ipairs(catalogCache) do
+            local inTab = ctx.Tab == "All" or (ctx.Tab == "1" and i % 2 == 1) or (ctx.Tab == "2" and i % 2 == 0)
+            local inCat = ctx.Category == "All" or field(raw, "Category", "category") == ctx.Category
+            local inQuery = ctx.Query == "" or string.find(string.lower(tostring(field(raw, "Name", "name"))), string.lower(ctx.Query), 1, true) ~= nil
+            if inTab and inCat and inQuery then table.insert(list, raw) end
+        end
+        if ctx.Sort == "Hot" then
+            table.sort(list, function(a, b) return (tonumber(field(a, "Rating", "rating")) or 0) > (tonumber(field(b, "Rating", "rating")) or 0) end)
+        elseif ctx.Sort == "New" then
+            table.sort(list, function(a, b) return (tonumber(field(a, "Date", "date")) or 0) > (tonumber(field(b, "Date", "date")) or 0) end)
+        else
+            table.sort(list, function(a, b) return tostring(field(a, "Name", "name")) < tostring(field(b, "Name", "name")) end)
+        end
+        local pages = math.max(1, math.ceil(#list / ctx.PageSize))
+        local page = {}
+        for i = (ctx.Page - 1) * ctx.PageSize + 1, math.min(#list, ctx.Page * ctx.PageSize) do
+            table.insert(page, list[i])
+        end
+        return page, pages, #list
+    end,
+})
+
+-- Open the catalog window from ordinary controls
+local ToolsTab = Window:CreateTab("Tools", "wrench")
+local CatalogSection = ToolsTab:CreateSection("Catalog window", 1)
+CatalogSection:CreateButton({
+    Name = "Open Catalog",
+    Callback = function() Catalog:Open() end,
+})
+CatalogSection:CreateToggle({
+    Name = "Catalog window",
+    Description = "Also toggled with the B key",
+    Default = false,
+    Callback = function(value) Catalog:Toggle(value) end,
+})
+CatalogSection:CreateButton({
+    Name = "Show first item details",
+    Callback = function()
+        Catalog:Open()
+        local first = Catalog:GetItems()[1]
+        if first then Catalog:ShowDetails(first) end
+    end,
+})
+
 -- Dialogs can also be opened directly:
 -- Window:CreateDialog({ Title = "Hello", Lines = { "Line one", { Text = "Warning", Icon = "alert-triangle", Color = "Accent" } },
 --     Buttons = { { Text = "OK", Primary = true, Close = true }, { "Cancel", "Later" } } })

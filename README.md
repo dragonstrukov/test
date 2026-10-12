@@ -52,6 +52,7 @@ Window methods:
 | `Window:CreateTab(name, icon)` / `Window:CreateTab({Name, Icon})` | Tab, returns `Tab` |
 | `Window:CreateThemeTab(name, icon)` | Tab with the theme list + custom theme editor |
 | `Window:CreateBrowseTab(opts)` | Full-width gallery tab (search, categories, sort, pages, cards). See [Browse](#browse) |
+| `Window:CreateBrowseWindow(opts)` | The same gallery in its own draggable window, opened with `Browse:Open()`. See [Browse window](#browse-window) |
 | `Window:CreateDialog(opts)` / `Window:CloseDialog()` | Centered modal card with pictures, info lines and buttons. See [Dialog](#dialog) |
 | `Window:Notify({Title, Content, Duration, Icon})` | Notification (icon is a Lucide name) |
 | `Window:CreateKeybindList(opts)` | Draggable Keybinds overlay (also `GetKeybindList`, `SetKeybindListVisible`) |
@@ -146,6 +147,58 @@ local Browse = Window:CreateBrowseTab({
     end,
 })
 ```
+
+### Browse window
+
+The gallery can also live in a separate window instead of a sidebar tab —
+handy when it should pop up from a button, a toggle or a hotkey:
+
+```lua
+local Catalog = Window:CreateBrowseWindow({   -- or CreateBrowseTab({ Mode = "Window", ... })
+    Name = "Catalog", Description = "Builds Gallery",
+    Width = 620, Height = 470,
+    ToggleKey = Enum.KeyCode.B,       -- optional hotkey
+    Visible = false,                  -- true = open right away
+    Tabs = { "All", { Name = "Tab 1", Id = "1" }, { Name = "Tab 2", Id = "2" } }, -- header switch -> ctx.Tab
+    Source = "https://.../builds.json", Details = true, Callback = function(item) end,
+})
+
+Section:CreateButton({ Name = "Open Catalog", Callback = function() Catalog:Open() end })
+Section:CreateToggle({ Name = "Catalog", Callback = function(v) Catalog:Toggle(v) end })
+Catalog:Close() / Catalog:IsOpen() / Catalog:SetTitle("...") / Catalog:SetCount(7960) / Catalog:SetPosition(UDim2) / Catalog:SetSize(w, h)
+```
+
+The handle has everything a tab-mode Browse has plus `Open / Close / Toggle /
+IsOpen`. The window hides together with the main UI (toggle key) and comes back
+with it. The header shows the logo, title, an item counter (`7 960`), the
+`Tabs` switch and a close button. `Window:CreateBrowsePanel(frame, opts)` puts
+the bare panel into any frame of your own.
+
+### Server-side paging (`Fetch`)
+
+For APIs that page / search / sort on the server, give Browse a `Fetch`
+function. It is called again on every page flip, search, sort, category or
+tab change and returns **one page**:
+
+```lua
+Fetch = function(ctx)
+    -- ctx = { Page, PageSize, Query, Sort ("Hot"), SortIndex, Category, Tab, Source, Browse }
+    local body = game:HttpGet(("https://example.com/api/builds?page=%d&pageSize=%d&q=%s&sort=%s")
+        :format(ctx.Page, ctx.PageSize, HttpService:UrlEncode(ctx.Query), ctx.Sort))
+    local data = HttpService:JSONDecode(body)
+    return data.items, math.ceil(data.total / ctx.PageSize), data.total   -- items, pages, total
+    -- return nil, 0, 0, "error text"  -> shows "Failed to load"
+end,
+```
+
+Returning only `items` (no page count) keeps the client-side mode: Browse
+filters, sorts and pages the list itself. `Remote = true` forces server mode
+from the start. `Tabs` renders an `All / Tab 1 / Tab 2` switch (in the toolbar
+for tab mode, in the header for window mode) and passes the active id as
+`ctx.Tab`; `OnTab(id)` fires on change. `ImageLoader = function(src, item)
+return asset end` replaces the built-in picture loader (e.g. to convert webp
+through a proxy before `getcustomasset`). Item fields also accept API names
+like `title`, `quality`, `thumbUrl` / `thumb_url` / `cover_url`, `uid`, `path`.
 
 Accepted JSON: an array of objects, or an object with `items` / `data` /
 `results` / `list` / `builds` / `scripts`, or a dictionary keyed by id.
@@ -251,8 +304,42 @@ dialog:IsOpen() / dialog:Close()
 
 Button styles: `Primary = true` (filled accent), `Accent = true` (accent text),
 default (neutral). `Close = true` closes the dialog after the callback. Only one
-dialog is open at a time; Esc, the ✕ button and a click on the backdrop close it.
-The header can be dragged.
+dialog is open at a time; Esc, the ✕ button and a click on the backdrop close it
+(a press that starts inside the dialog never closes it, so dragging is safe).
+The header can be dragged. `Anchor = someFrame` centers the dialog over that
+frame instead of the main window; `ImageLoader` works like in Browse.
+
+## Shared internals / companion scripts
+
+Scripts built next to the window (modules, catalogs, overlays) can reuse the
+live theme engine so every extra frame matches the UI 1:1:
+
+```lua
+local UI = Window              -- the same fields are mirrored on Library after CreateWindow
+UI.Theme                       -- live palette table: UI.Theme.Accent, UI.Theme.CardBg ...
+UI.BindColor(inst, "BackgroundColor3", "CardBg")   -- re-applied on every theme change
+UI.TweenColors(inst, TweenInfo.new(0.2), { TextColor3 = "Accent" }):Play()
+UI.RefreshTheme()
+UI.ResolveIcon("zap")          -- Lucide name -> rbxassetid
+UI.TintIcon(imageLabel, "zap", "Accent")
+UI.Icons                       -- the Lucide table
+UI.LogoAsset                   -- window logo asset (may be "")
+UI.ScreenGui, UI.Main          -- root ScreenGui and the main frame
+UI.HttpGet(url)                -- game:HttpGet -> request() -> HttpService fallback; returns body or nil, err
+```
+
+A MacrOS-style module simply points at the window: `local MacrOSUI = Window`
+gives `MacrOSUI.Theme`, `MacrOSUI.BindColor`, `MacrOSUI.ResolveIcon`,
+`MacrOSUI.LogoAsset`. Small helpers live on `Library` itself and do not need a
+window:
+
+```lua
+Library.Stage("Catalog", function() ... end)  -- protected runner, errors go to warn() + notification
+Library.ReadFile(path)                        -- nil when missing / unsupported
+Library.WriteFile(path, data)                 -- creates folders, returns true/false
+Library.JSONDecode(text) / Library.JSONEncode(value)
+Library.HttpGet(url), Library.Notify(opts), Library.CreateDialog(opts)  -- after CreateWindow
+```
 
 ## Keybind list
 

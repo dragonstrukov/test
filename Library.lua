@@ -1,6 +1,57 @@
 local Library = {}
-Library.Version = "1.1.0"
+Library.Version = "1.2.0"
 Library.Flags = {}
+
+--[[ Module/stage runner (MacrOS-style): Library.Stage("Catalog", function() ... end)
+    Runs the function in a protected call, keeps the result in Library.Stages[name]
+    and reports errors through the window notification when one exists. ]]
+Library.Stages = {}
+function Library.Stage(name, fn, ...)
+    if type(name) == "function" then fn, name = name, "stage" end
+    if type(fn) ~= "function" then return false, "Stage " .. tostring(name) .. ": no function" end
+    local ok, result = pcall(fn, ...)
+    Library.Stages[name] = ok and (result == nil and true or result) or nil
+    if not ok then
+        warn(("[UI Library] stage '%s' failed: %s"):format(tostring(name), tostring(result)))
+        if type(Library.Notify) == "function" then
+            pcall(Library.Notify, {Title = "Stage failed: " .. tostring(name), Content = tostring(result), Icon = "alert-triangle", Duration = 6})
+        end
+    end
+    return ok, result
+end
+Library.stage = Library.Stage
+
+-- Executor file helpers (nil-safe: return nil / false when the executor lacks them)
+function Library.ReadFile(path)
+    if type(readfile) ~= "function" then return nil end
+    if type(isfile) == "function" then
+        local okExists, exists = pcall(isfile, path)
+        if okExists and not exists then return nil end
+    end
+    local ok, data = pcall(readfile, path)
+    return ok and data or nil
+end
+function Library.WriteFile(path, data)
+    if type(writefile) ~= "function" then return false end
+    local folder = string.match(path, "^(.*)/[^/]+$")
+    if folder and type(makefolder) == "function" then
+        local acc = ""
+        for part in string.gmatch(folder, "[^/]+") do
+            acc = (acc == "") and part or (acc .. "/" .. part)
+            if type(isfolder) ~= "function" or not isfolder(acc) then pcall(makefolder, acc) end
+        end
+    end
+    return (pcall(writefile, path, data))
+end
+function Library.JSONDecode(text)
+    local ok, res = pcall(function() return game:GetService("HttpService"):JSONDecode(text) end)
+    return ok and res or nil, (not ok) and res or nil
+end
+function Library.JSONEncode(value)
+    local ok, res = pcall(function() return game:GetService("HttpService"):JSONEncode(value) end)
+    return ok and res or nil
+end
+Library.readFile, Library.writeFile = Library.ReadFile, Library.WriteFile
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -3611,6 +3662,8 @@ local KEY_ALIASES = {
     resizeHandle.ZIndex = 10
     resizeHandle.Parent = Main
 
+    local BROWSE_WINDOWS = {} -- standalone Browse windows: {Frame, Scale, HiddenWithUI}
+
     local function makeGripLine(xOffset, yOffset, length)
         local line = Instance.new("Frame")
         line.Size = UDim2.new(0, length, 0, 1)
@@ -3674,6 +3727,7 @@ local KEY_ALIASES = {
             mainScale.Scale = scale
             notifyScale.Scale = scale
             keybindScale.Scale = scale
+            for _, bw in ipairs(BROWSE_WINDOWS) do bw.Scale.Scale = scale end
             Main.Size = UDim2.new(0, newW / scale, 0, newH / scale)
         end))
 
@@ -3902,10 +3956,10 @@ local KEY_ALIASES = {
         if type(raw) ~= "table" then return nil end
         if raw.__browseItem then return raw end
         local item = {__browseItem = true, Raw = raw}
-        item.Id = pickField(raw, "Id", "id", "ID", "Key", "key") or index
-        item.Name = tostring(pickField(raw, "Name", "name", "Title", "title") or ("Item " .. tostring(index)))
+        item.Id = pickField(raw, "Id", "id", "ID", "Key", "key", "uid", "Uid", "path", "Path") or index
+        item.Name = tostring(pickField(raw, "Name", "name", "Title", "title", "rawTitle", "fileName", "filename") or ("Item " .. tostring(index)))
         item.Category = tostring(pickField(raw, "Category", "category", "Type", "type", "Class", "class", "Kind", "kind") or "Other")
-        local rating = tonumber(pickField(raw, "Rating", "rating", "Likes", "likes", "Score", "score", "Percent", "percent"))
+        local rating = tonumber(pickField(raw, "Rating", "rating", "Likes", "likes", "Score", "score", "Percent", "percent", "Quality", "quality"))
         if rating and rating > 0 and rating <= 1 then rating = rating * 100 end
         item.Rating = rating
         item.Images = {}
@@ -3915,7 +3969,8 @@ local KEY_ALIASES = {
                 if img ~= nil and img ~= "" then table.insert(item.Images, img) end
             end
         end
-        local single = pickField(raw, "Image", "image", "Thumbnail", "thumbnail", "Icon", "icon", "Preview", "preview")
+        local single = pickField(raw, "Image", "image", "Thumbnail", "thumbnail", "Icon", "icon", "Preview", "preview",
+            "thumbUrl", "thumb_url", "thumbnail_url", "image_url", "coverUrl", "cover_url", "ImageUrl", "imageUrl")
         if single ~= nil and single ~= "" and #item.Images == 0 then
             table.insert(item.Images, single)
         end
@@ -4016,15 +4071,26 @@ local KEY_ALIASES = {
         box.AnchorPoint = Vector2.new(0.5, 0.5)
         bindColor(box, "BackgroundColor3", "Background")
         box.BorderSizePixel = 0
+        box.Active = true -- sinks input: clicks/drags inside never reach the backdrop
         box.ZIndex = 150
         box.Parent = ScreenGui
         scalePopup(box)
         addCorner(box, 12)
-        local boxStroke = addStroke(box, 1.2)
-        bindColor(boxStroke, "Color", "BorderActive")
+        local boxStroke = addStroke(box, 1)
+        boxStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        boxStroke.LineJoinMode = Enum.LineJoinMode.Round
 
-        do -- center over the main window
-            local center = Main.AbsolutePosition - ScreenGui.AbsolutePosition + Main.AbsoluteSize / 2
+        do -- center over the anchor window (main window by default)
+            local anchor = dOpts.Anchor
+            if typeof(anchor) ~= "Instance" or not anchor:IsA("GuiObject") or not anchor.Visible then
+                anchor = Main.Visible and Main or nil
+            end
+            local center
+            if anchor then
+                center = anchor.AbsolutePosition - ScreenGui.AbsolutePosition + anchor.AbsoluteSize / 2
+            else
+                center = ScreenGui.AbsoluteSize / 2
+            end
             box.Position = UDim2.fromOffset(center.X, center.Y + 16)
             TweenService:Create(box, TWEEN_SLOW, {Position = UDim2.fromOffset(center.X, center.Y)}):Play()
         end
@@ -4188,10 +4254,15 @@ local KEY_ALIASES = {
                 img.ZIndex = 152
                 img.Parent = area
                 local src = images[i]
-                if type(src) == "string" and string.match(src, "^https?://") then
+                if dOpts.ImageLoader or (type(src) == "string" and string.match(src, "^https?://")) then
                     task.spawn(function()
-                        local asset = resolveBrowseImage(src)
-                        if img.Parent then img.Image = asset end
+                        local asset
+                        if dOpts.ImageLoader then
+                            local ok, res = pcall(dOpts.ImageLoader, src)
+                            asset = (ok and type(res) == "string") and res or nil
+                        end
+                        if not asset then asset = resolveBrowseImage(src) end
+                        if img.Parent and asset then img.Image = asset end
                     end)
                 else
                     img.Image = resolveBrowseImage(src)
@@ -4457,7 +4528,24 @@ local KEY_ALIASES = {
         handle.Data = dOpts.Data
 
         if dOpts.CloseOnBackdrop ~= false then
-            overlay.MouseButton1Click:Connect(function() handle.Close() end)
+            local function insideBox(pos)
+                local p0 = box.AbsolutePosition
+                local p1 = p0 + box.AbsoluteSize
+                return pos.X >= p0.X and pos.X <= p1.X and pos.Y >= p0.Y and pos.Y <= p1.Y
+            end
+            local pressedOutside = false
+            overlay.InputBegan:Connect(function(input)
+                if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+                pressedOutside = not insideBox(Vector2.new(input.Position.X, input.Position.Y))
+            end)
+            overlay.InputEnded:Connect(function(input)
+                if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+                local wasOutside = pressedOutside
+                pressedOutside = false
+                if wasOutside and not insideBox(Vector2.new(input.Position.X, input.Position.Y)) then
+                    handle.Close()
+                end
+            end)
         end
         closeBtn.MouseButton1Click:Connect(function() handle.Close() end)
         table.insert(connections, UserInputService.InputBegan:Connect(function(input, gp)
@@ -4470,7 +4558,9 @@ local KEY_ALIASES = {
         return wrapHandle(handle)
     end
 
-    local function buildBrowsePanel(tabName, opts)
+    --[[ host = nil  -> panel lives in the main window's content area (tab mode)
+         host = {Parent = frame, Window = frame, OnOpen = fn} -> standalone window ]]
+    local function buildBrowsePanel(tabName, opts, host)
         opts = opts or {}
         local columns = math.max(1, math.floor(tonumber(opts.Columns) or 3))
         local pageSize = math.max(1, math.floor(tonumber(opts.PageSize) or 9))
@@ -4480,6 +4570,16 @@ local KEY_ALIASES = {
         local source = opts.Source or opts.Url or opts.Api or opts.API
         local fetcher = opts.Fetch or opts.Loader
         local detailsOpt = opts.Details or opts.Dialog
+        local imageLoader = opts.ImageLoader or opts.LoadImage -- function(src, item) -> asset string
+        local remote = (opts.Remote == true) or (opts.ServerSide == true) -- server does paging/search/sort
+        local sourceTabs = {}
+        for _, t in ipairs(opts.Tabs or {}) do
+            if type(t) == "table" then
+                table.insert(sourceTabs, {Name = tostring(t.Name or t.Text or t.Title or "Tab"), Id = t.Id or t.Value or t.Name or t.Text})
+            else
+                table.insert(sourceTabs, {Name = tostring(t), Id = t})
+            end
+        end
         local placeholderIcon = opts.PlaceholderIcon or "image"
         local imageScale = (tostring(opts.ImageScaleType or opts.ImageScale or "Crop"):lower() == "fit")
             and Enum.ScaleType.Fit or Enum.ScaleType.Crop
@@ -4511,15 +4611,17 @@ local KEY_ALIASES = {
             Selected = nil,
             Loading = false,
             Generation = 0,
+            Tab = sourceTabs[1] and sourceTabs[1].Id or nil,
+            Total = nil,
         }
 
         local Panel = Instance.new("Frame")
         Panel.Name = "BrowsePanel"
         Panel.Size = UDim2.new(1, 0, 1, 0)
         Panel.BackgroundTransparency = 1
-        Panel.Visible = false
+        Panel.Visible = host ~= nil
         Panel.ZIndex = 3
-        Panel.Parent = ContentArea
+        Panel.Parent = host and host.Parent or ContentArea
 
         local panelPad = Instance.new("UIPadding")
         panelPad.PaddingLeft = UDim.new(0, 4)
@@ -4820,6 +4922,10 @@ local KEY_ALIASES = {
             end
             spec.HeaderButtons = wiredHeader
             spec.Data = item
+            if spec.ImageLoader == nil and imageLoader then
+                spec.ImageLoader = function(src) return imageLoader(src, item) end
+            end
+            if spec.Anchor == nil and host and host.Window then spec.Anchor = host.Window end
             state.Selected = item
             local dialog = createDialog(spec)
             if opts.OnDetails then task.spawn(opts.OnDetails, item, dialog) end
@@ -4857,13 +4963,19 @@ local KEY_ALIASES = {
                 img.ScaleType = item.Fit and Enum.ScaleType.Fit or imageScale
                 img.ZIndex = 6
                 img.Parent = thumb
-                local immediate = (type(src) == "string" and string.match(src, "^https?://")) and nil or resolveBrowseImage(src)
+                local immediate = (imageLoader == nil and not (type(src) == "string" and string.match(src, "^https?://")))
+                    and resolveBrowseImage(src) or nil
                 if immediate then
                     img.Image = immediate
                 else
                     task.spawn(function()
-                        local asset = resolveBrowseImage(src)
-                        if state.Generation == generation and img.Parent then
+                        local asset
+                        if imageLoader then
+                            local ok, res = pcall(imageLoader, src, item)
+                            asset = (ok and type(res) == "string") and res or nil
+                        end
+                        if not asset then asset = resolveBrowseImage(src) end
+                        if state.Generation == generation and img.Parent and asset then
                             img.Image = asset
                         end
                     end)
@@ -4984,13 +5096,22 @@ local KEY_ALIASES = {
             state.Generation = state.Generation + 1
             local generation = state.Generation
             local total = #state.Filtered
-            state.Pages = math.max(1, math.ceil(total / pageSize))
-            state.Page = math.clamp(state.Page, 1, state.Pages)
+            local first
+            if remote then
+                -- the server already returned exactly one page
+                state.Pages = math.max(1, math.floor(tonumber(state.RemotePages) or 1))
+                state.Page = math.clamp(state.Page, 1, state.Pages)
+                first = 1
+            else
+                state.Pages = math.max(1, math.ceil(total / pageSize))
+                state.Page = math.clamp(state.Page, 1, state.Pages)
+                first = (state.Page - 1) * pageSize + 1
+            end
             PageLabel.Text = string.format("%d/%d", state.Page, state.Pages)
+            if host and host.SetCount then host.SetCount(state.Total or (not remote and #state.Items or nil)) end
 
-            local first = (state.Page - 1) * pageSize + 1
             local shown = 0
-            for i = first, math.min(total, first + pageSize - 1) do
+            for i = first, (remote and total or math.min(total, first + pageSize - 1)) do
                 shown = shown + 1
                 local entry = cardPool[shown]
                 if not entry then
@@ -5045,7 +5166,15 @@ local KEY_ALIASES = {
             return string.find(hay, query, 1, true) ~= nil
         end
 
+        local requestLoad -- forward: (re)fetch in remote mode
+
         local function applyFilters(keepPage)
+            if remote then
+                state.Filtered = state.Items
+                if not keepPage then state.Page = 1 end
+                renderPage()
+                return
+            end
             local query = string.lower(trimText(state.Query))
             local list = {}
             for _, item in ipairs(state.Items) do
@@ -5124,7 +5253,7 @@ local KEY_ALIASES = {
             for _, chip in ipairs(chipButtons) do
                 setChipActive(chip, chip.Name == name)
             end
-            applyFilters(false)
+            if remote then state.Page = 1 requestLoad() else applyFilters(false) end
         end
 
         local function setCategories(list)
@@ -5182,9 +5311,28 @@ local KEY_ALIASES = {
             sortLabel.Text = mode.Name
             sortIcon.Image = resolveIcon(mode.Icon)
             tintIcon(sortIcon, mode.Icon, "Accent")
-            applyFilters(false)
+            if remote then state.Page = 1 requestLoad() else applyFilters(false) end
         end
 
+        local function fetchContext()
+            return {
+                Page = state.Page,
+                PageSize = pageSize,
+                Query = trimText(state.Query),
+                Sort = sortModes[state.SortIndex] and sortModes[state.SortIndex].Name or nil,
+                SortIndex = state.SortIndex,
+                Category = state.Category,
+                Tab = state.Tab,
+                Source = source,
+                Browse = Browse,
+                State = state,
+            }
+        end
+
+        --[[ Fetch(ctx) may return:
+              items                      -> client-side list (filtered/sorted/paged here)
+              items, pages, total, err   -> one server page (remote mode is switched on automatically)
+            A string result is JSON-decoded. ctx = {Page, PageSize, Query, Sort, Category, Tab, Source, Browse} ]]
         local loadToken = 0
         local function load(newSource)
             if newSource ~= nil then source = newSource end
@@ -5195,14 +5343,16 @@ local KEY_ALIASES = {
             local token = loadToken
             state.Loading = true
             setStatus("Loading...")
+            local ctx = fetchContext()
             task.spawn(function()
-                local ok, result = pcall(function()
+                local ok, result, pages, total, fetchErr = pcall(function()
                     if fetcher then
-                        local out = fetcher(source, state)
+                        local out, outPages, outTotal, outErr = fetcher(ctx)
                         if type(out) == "string" then
                             out = HttpService:JSONDecode(out)
                         end
-                        return out
+                        if out == nil and outErr ~= nil then error(tostring(outErr)) end
+                        return out, outPages, outTotal, outErr
                     end
                     local body, err = httpGet(tostring(source))
                     if not body then error(err or "request failed") end
@@ -5214,13 +5364,28 @@ local KEY_ALIASES = {
                 state.Loading = false
                 if ok then
                     if parse then
-                        local okParse, parsed = pcall(parse, result)
+                        local okParse, parsed = pcall(parse, result, ctx)
                         if okParse and parsed ~= nil then
                             result = parsed
                         end
                     end
-                    setItems(result)
-                    if opts.OnLoad then task.spawn(opts.OnLoad, state.Items) end
+                    if pages ~= nil and tonumber(pages) then
+                        remote = true
+                        state.RemotePages = tonumber(pages)
+                        state.Total = tonumber(total)
+                    end
+                    if remote then
+                        state.Items = {}
+                        for i, raw in ipairs(extractBrowseList(result)) do
+                            local item = normalizeBrowseItem(raw, (ctx.Page - 1) * pageSize + i)
+                            if item then table.insert(state.Items, item) end
+                        end
+                        if autoCategories then setCategories(collectCategories(state.Items)) end
+                        applyFilters(true)
+                    else
+                        setItems(result)
+                    end
+                    if opts.OnLoad then task.spawn(opts.OnLoad, state.Items, ctx) end
                 else
                     -- keep whatever is already shown (e.g. `Items` passed as a fallback)
                     if #state.Items == 0 then
@@ -5239,6 +5404,7 @@ local KEY_ALIASES = {
             end)
             return true
         end
+        requestLoad = function() load() end
 
         -- wiring -------------------------------------------------------------------
         local searchDebounce = 0
@@ -5246,8 +5412,9 @@ local KEY_ALIASES = {
             searchDebounce = searchDebounce + 1
             local id = searchDebounce
             state.Query = searchInput.Text
-            task.delay(0.15, function()
-                if id == searchDebounce and not isClosed then applyFilters(false) end
+            task.delay(remote and 0.4 or 0.15, function()
+                if id ~= searchDebounce or isClosed then return end
+                if remote then state.Page = 1 requestLoad() else applyFilters(false) end
             end)
         end)
 
@@ -5266,8 +5433,95 @@ local KEY_ALIASES = {
 
         local function setPage(n)
             n = math.floor(tonumber(n) or 1)
-            state.Page = math.clamp(n, 1, state.Pages)
-            renderPage()
+            n = math.clamp(n, 1, state.Pages)
+            if remote then
+                if n == state.Page and not state.Loading then return end
+                state.Page = n
+                requestLoad()
+            else
+                state.Page = n
+                renderPage()
+            end
+        end
+
+        local setTab -- source tabs ("All / Tab 1 / Tab 2")
+        local tabButtons = {}
+        if #sourceTabs > 0 then
+            local segHost = (host and host.TabsParent) or Toolbar
+            local seg = Instance.new("Frame")
+            seg.Name = "SourceTabs"
+            seg.Size = UDim2.new(0, 0, 1, 0)
+            seg.AutomaticSize = Enum.AutomaticSize.X
+            bindColor(seg, "BackgroundColor3", "BadgeBg")
+            seg.BorderSizePixel = 0
+            seg.ZIndex = 4
+            seg.Parent = segHost
+            addCorner(seg, 8)
+            addStroke(seg, 1)
+            local segPad = Instance.new("UIPadding")
+            segPad.PaddingLeft = UDim.new(0, 3)
+            segPad.PaddingRight = UDim.new(0, 3)
+            segPad.PaddingTop = UDim.new(0, 3)
+            segPad.PaddingBottom = UDim.new(0, 3)
+            segPad.Parent = seg
+            local segLayout = Instance.new("UIListLayout")
+            segLayout.FillDirection = Enum.FillDirection.Horizontal
+            segLayout.SortOrder = Enum.SortOrder.LayoutOrder
+            segLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+            segLayout.Padding = UDim.new(0, 2)
+            segLayout.Parent = seg
+            if segHost == Toolbar then
+                seg.Position = UDim2.new(1, -(rightW + 6), 0, 0)
+                seg.AnchorPoint = Vector2.new(1, 0)
+                seg:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+                    SearchFrame.Size = UDim2.new(1, -(rightW + 14 + seg.AbsoluteSize.X / math.max(UI_SCALE, 0.01)), 1, 0)
+                end)
+            end
+            for i, t in ipairs(sourceTabs) do
+                local b = Instance.new("TextButton")
+                b.Size = UDim2.new(0, 0, 1, 0)
+                b.AutomaticSize = Enum.AutomaticSize.X
+                b.LayoutOrder = i
+                b.BorderSizePixel = 0
+                b.Text = ""
+                b.AutoButtonColor = false
+                b.ZIndex = 5
+                b.Parent = seg
+                addCorner(b, 6)
+                local bp = Instance.new("UIPadding")
+                bp.PaddingLeft = UDim.new(0, 10)
+                bp.PaddingRight = UDim.new(0, 10)
+                bp.Parent = b
+                local l = Instance.new("TextLabel")
+                l.Size = UDim2.new(0, 0, 1, 0)
+                l.AutomaticSize = Enum.AutomaticSize.X
+                l.BackgroundTransparency = 1
+                l.Text = t.Name
+                l.Font = Enum.Font.GothamBold
+                l.TextSize = 10.5
+                l.ZIndex = 6
+                l.Parent = b
+                local entry = {Button = b, Label = l, Tab = t}
+                local active = (state.Tab == t.Id)
+                bindColor(b, "BackgroundColor3", active and "Accent" or "BadgeBg")
+                b.BackgroundTransparency = active and 0 or 1
+                bindColor(l, "TextColor3", active and "KnobOn" or "TextMuted")
+                b.MouseButton1Click:Connect(function() setTab(t.Id) end)
+                b.MouseEnter:Connect(function() if state.Tab ~= t.Id then tweenColors(l, TWEEN_FAST, {TextColor3 = "TextPrimary"}):Play() end end)
+                b.MouseLeave:Connect(function() if state.Tab ~= t.Id then tweenColors(l, TWEEN_FAST, {TextColor3 = "TextMuted"}):Play() end end)
+                table.insert(tabButtons, entry)
+            end
+        end
+        setTab = function(id)
+            for _, entry in ipairs(tabButtons) do
+                local active = (entry.Tab.Id == id)
+                tweenColors(entry.Button, TWEEN_FAST, {BackgroundColor3 = active and "Accent" or "BadgeBg", BackgroundTransparency = active and 0 or 1}):Play()
+                tweenColors(entry.Label, TWEEN_FAST, {TextColor3 = active and "KnobOn" or "TextMuted"}):Play()
+            end
+            if state.Tab == id then return end
+            state.Tab = id
+            if opts.OnTab then task.spawn(opts.OnTab, id, Browse) end
+            if fetcher then state.Page = 1 requestLoad() else applyFilters(false) end
         end
         PrevBtn.MouseButton1Click:Connect(function() setPage(state.Page - 1) end)
         NextBtn.MouseButton1Click:Connect(function() setPage(state.Page + 1) end)
@@ -5291,20 +5545,30 @@ local KEY_ALIASES = {
             load()
         end
 
-        table.insert(PANEL_LIST, {
-            Frame = Panel,
-            Tab = tabName,
-            OnShow = function()
-                updateCellSize()
-                if opts.Lazy ~= false then ensureLoaded() end
-            end,
-        })
+        local function onShown()
+            updateCellSize()
+            if opts.Lazy ~= false then ensureLoaded() end
+        end
+        if host then
+            host.OnOpen = onShown
+            if not host.Window then task.defer(onShown) end -- embedded in a custom frame: always visible
+        else
+            table.insert(PANEL_LIST, {Frame = Panel, Tab = tabName, OnShow = onShown})
+        end
         if opts.Lazy == false then
             task.spawn(ensureLoaded)
         end
 
         -- public handle ------------------------------------------------------------
         Browse.Panel = Panel
+        Browse.Host = host
+        function Browse:SetTab(id) setTab(id) end
+        function Browse:GetTab() return state.Tab end
+        function Browse:SetTotal(n) state.Total = tonumber(n) if host and host.SetCount then host.SetCount(state.Total) end end
+        function Browse:GetTotal() return state.Total or #state.Items end
+        function Browse:SetRemote(on) remote = on and true or false end
+        function Browse:IsRemote() return remote end
+        function Browse:GetState() return state end
         function Browse:ShowDetails(item, overrides) return showDetails(item or state.Selected, overrides) end
         function Browse:CloseDetails() closeActiveDialog() end
         function Browse:SetDetails(details) detailsOpt = details end
@@ -5355,6 +5619,256 @@ local KEY_ALIASES = {
         Browse.Filter = Browse.SetCategory
         Browse.OnSelect = Browse.SetCallback
         return Browse
+    end
+
+    --[[ Standalone Browse window: the same gallery panel inside its own
+        draggable window (header with logo, title, counter, source tabs and a
+        close button). Opened from code: Browse:Open() / Close() / Toggle(). ]]
+    local function createBrowseWindow(opts)
+        opts = opts or {}
+        local width = tonumber(opts.Width) or 620
+        local height = tonumber(opts.Height) or 470
+        local HEADER_H = 50
+
+        local Win = Instance.new("Frame")
+        Win.Name = "BrowseWindow"
+        Win.Size = UDim2.new(0, width, 0, height)
+        Win.AnchorPoint = Vector2.new(0.5, 0.5)
+        Win.Position = opts.Position or UDim2.new(0.5, 0, 0.5, 0)
+        bindColor(Win, "BackgroundColor3", "Background")
+        Win.BorderSizePixel = 0
+        Win.Active = true
+        Win.ClipsDescendants = true
+        Win.Visible = false
+        Win.ZIndex = 120
+        Win.Parent = ScreenGui
+        local winScale = Instance.new("UIScale")
+        winScale.Scale = UI_SCALE
+        winScale.Parent = Win
+        addCorner(Win, 12)
+        local winStroke = addStroke(Win, 1.2)
+        winStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+        local header = Instance.new("Frame")
+        header.Size = UDim2.new(1, 0, 0, HEADER_H)
+        header.BackgroundTransparency = 1
+        header.ZIndex = 121
+        header.Parent = Win
+
+        local headerLine = Instance.new("Frame")
+        headerLine.Size = UDim2.new(1, -24, 0, 1)
+        headerLine.Position = UDim2.new(0, 12, 0, HEADER_H - 1)
+        bindColor(headerLine, "BackgroundColor3", "Divider")
+        headerLine.BorderSizePixel = 0
+        headerLine.ZIndex = 121
+        headerLine.Parent = Win
+
+        local logo = Instance.new("ImageLabel")
+        logo.Size = UDim2.new(0, 26, 0, 26)
+        logo.Position = UDim2.new(0, 12, 0, 12)
+        logo.BackgroundTransparency = 1
+        logo.ZIndex = 122
+        logo.Parent = header
+        local iconName = opts.Icon
+        if opts.Logo == false or (iconName and LUCIDE[iconName]) then
+            logo.Image = resolveIcon(iconName or "store")
+            tintIcon(logo, iconName or "store", "Accent")
+        elseif LOGO_ASSET and LOGO_ASSET ~= "" then
+            logo.Image = LOGO_ASSET
+        else
+            logo.Image = resolveIcon("store")
+            tintIcon(logo, "store", "Accent")
+        end
+
+        local brandRow = Instance.new("Frame")
+        brandRow.Size = UDim2.new(1, -200, 0, 18)
+        brandRow.Position = UDim2.new(0, 46, 0, 8)
+        brandRow.BackgroundTransparency = 1
+        brandRow.ZIndex = 122
+        brandRow.Parent = header
+        local brandLayout = Instance.new("UIListLayout")
+        brandLayout.FillDirection = Enum.FillDirection.Horizontal
+        brandLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        brandLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+        brandLayout.Padding = UDim.new(0, 8)
+        brandLayout.Parent = brandRow
+
+        local title = Instance.new("TextLabel")
+        title.Size = UDim2.new(0, 0, 1, 0)
+        title.AutomaticSize = Enum.AutomaticSize.X
+        title.LayoutOrder = 1
+        title.BackgroundTransparency = 1
+        title.Text = tostring(opts.Title or opts.Name or "Browse")
+        title.Font = Enum.Font.GothamBold
+        title.TextSize = 13
+        bindColor(title, "TextColor3", "TextPrimary")
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.ZIndex = 122
+        title.Parent = brandRow
+
+        local countPill = Instance.new("Frame")
+        countPill.Size = UDim2.new(0, 0, 0, 16)
+        countPill.AutomaticSize = Enum.AutomaticSize.X
+        countPill.LayoutOrder = 2
+        bindColor(countPill, "BackgroundColor3", "VersionBg")
+        countPill.BorderSizePixel = 0
+        countPill.Visible = false
+        countPill.ZIndex = 122
+        countPill.Parent = brandRow
+        addCorner(countPill, 8)
+        local cpPad = Instance.new("UIPadding")
+        cpPad.PaddingLeft = UDim.new(0, 7)
+        cpPad.PaddingRight = UDim.new(0, 7)
+        cpPad.Parent = countPill
+        local countText = Instance.new("TextLabel")
+        countText.Size = UDim2.new(0, 0, 1, 0)
+        countText.AutomaticSize = Enum.AutomaticSize.X
+        countText.BackgroundTransparency = 1
+        countText.Text = ""
+        countText.Font = Enum.Font.GothamBold
+        countText.TextSize = 10
+        bindColor(countText, "TextColor3", "KnobOn")
+        countText.ZIndex = 123
+        countText.Parent = countPill
+
+        local subtitle = Instance.new("TextLabel")
+        subtitle.Size = UDim2.new(1, -200, 0, 12)
+        subtitle.Position = UDim2.new(0, 46, 0, 27)
+        subtitle.BackgroundTransparency = 1
+        subtitle.Text = tostring(opts.Description or opts.Subtitle or "Gallery")
+        subtitle.Font = Enum.Font.Gotham
+        subtitle.TextSize = 9
+        bindColor(subtitle, "TextColor3", "TextMuted")
+        subtitle.TextXAlignment = Enum.TextXAlignment.Left
+        subtitle.ZIndex = 122
+        subtitle.Parent = header
+
+        local headerRight = Instance.new("Frame")
+        headerRight.Size = UDim2.new(0, 0, 0, 28)
+        headerRight.AutomaticSize = Enum.AutomaticSize.X
+        headerRight.AnchorPoint = Vector2.new(1, 0.5)
+        headerRight.Position = UDim2.new(1, -12, 0, HEADER_H / 2)
+        headerRight.BackgroundTransparency = 1
+        headerRight.ZIndex = 122
+        headerRight.Parent = header
+        local hrLayout = Instance.new("UIListLayout")
+        hrLayout.FillDirection = Enum.FillDirection.Horizontal
+        hrLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        hrLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+        hrLayout.Padding = UDim.new(0, 8)
+        hrLayout.Parent = headerRight
+
+        local closeBtn = Instance.new("ImageButton")
+        closeBtn.Size = UDim2.new(0, 26, 0, 26)
+        closeBtn.LayoutOrder = 99
+        bindColor(closeBtn, "BackgroundColor3", "BadgeBg")
+        closeBtn.BorderSizePixel = 0
+        closeBtn.AutoButtonColor = false
+        closeBtn.Image = ""
+        closeBtn.ZIndex = 123
+        closeBtn.Parent = headerRight
+        addCorner(closeBtn, 7)
+        addStroke(closeBtn, 1)
+        local closeIcon = Instance.new("ImageLabel")
+        closeIcon.Size = UDim2.new(0, 12, 0, 12)
+        closeIcon.Position = UDim2.new(0.5, -6, 0.5, -6)
+        closeIcon.BackgroundTransparency = 1
+        closeIcon.Image = resolveIcon("x")
+        tintIcon(closeIcon, "x", "TextMuted")
+        closeIcon.ZIndex = 124
+        closeIcon.Parent = closeBtn
+        closeBtn.MouseEnter:Connect(function() tweenColors(closeIcon, TWEEN_FAST, {ImageColor3 = "Accent"}):Play() end)
+        closeBtn.MouseLeave:Connect(function() tweenColors(closeIcon, TWEEN_FAST, {ImageColor3 = "TextMuted"}):Play() end)
+
+        local content = Instance.new("Frame")
+        content.Name = "Content"
+        content.Size = UDim2.new(1, -20, 1, -(HEADER_H + 8))
+        content.Position = UDim2.new(0, 10, 0, HEADER_H + 2)
+        content.BackgroundTransparency = 1
+        content.ClipsDescendants = true
+        content.ZIndex = 121
+        content.Parent = Win
+
+        -- the panel uses ZIndex 3..8 internally; lift everything above the window chrome
+        local host = {Parent = content, Window = Win, TabsParent = headerRight, Scale = winScale}
+        local entry = {Frame = Win, Scale = winScale, HiddenWithUI = false}
+        table.insert(BROWSE_WINDOWS, entry)
+
+        function host.SetCount(n)
+            n = tonumber(n)
+            if not n then countPill.Visible = false return end
+            local str = tostring(math.floor(n))
+            -- 7960 -> "7 960"
+            str = string.reverse((string.gsub(string.reverse(str), "(%d%d%d)", "%1 ")))
+            str = (string.gsub(str, "^%s+", ""))
+            countText.Text = str
+            countPill.Visible = true
+        end
+
+        do -- drag
+            local dragging, dragStart, startPos = false, nil, nil
+            header.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    dragging = true
+                    dragStart = input.Position
+                    startPos = Win.Position
+                end
+            end)
+            trackConn(UserInputService.InputChanged:Connect(function(input)
+                if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                    local delta = input.Position - dragStart
+                    Win.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                end
+            end))
+            trackConn(UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    dragging = false
+                end
+            end))
+        end
+
+        local api = {}
+        function api.IsOpen() return Win.Visible end
+        function api.Open()
+            if Win.Visible then return end
+            entry.HiddenWithUI = false
+            winScale.Scale = UI_SCALE
+            Win.Visible = true
+            local target = Win.Position
+            Win.Position = target + UDim2.fromOffset(0, 24)
+            TweenService:Create(Win, TWEEN_SLOW, {Position = target}):Play()
+            if host.OnOpen then task.spawn(host.OnOpen) end
+            if opts.OnOpen then task.spawn(opts.OnOpen) end
+        end
+        function api.Close()
+            if not Win.Visible then return end
+            Win.Visible = false
+            entry.HiddenWithUI = false
+            closeActiveDialog()
+            if opts.OnClose then task.spawn(opts.OnClose) end
+        end
+        function api.Toggle(visible)
+            if visible == nil then visible = not Win.Visible end
+            if visible then api.Open() else api.Close() end
+        end
+        function api.SetTitle(text) title.Text = tostring(text) end
+        function api.SetDescription(text) subtitle.Text = tostring(text) end
+        function api.SetCount(n) host.SetCount(n) end
+        function api.SetPosition(pos) Win.Position = pos end
+        function api.SetSize(w, h)
+            Win.Size = UDim2.new(0, tonumber(w) or width, 0, tonumber(h) or height)
+        end
+        api.Frame = Win
+        api.Host = host
+        closeBtn.MouseButton1Click:Connect(api.Close)
+
+        if opts.ToggleKey then
+            trackConn(UserInputService.InputBegan:Connect(function(input, gp)
+                if gp or isClosed then return end
+                if input.KeyCode == opts.ToggleKey then api.Toggle() end
+            end))
+        end
+        return api, host
     end
 
     local function buildThemeCards(themeTabName)
@@ -5544,12 +6058,24 @@ local KEY_ALIASES = {
         if open then
             OpenButton.Visible = false
             Main.Visible = true
+            for _, bw in ipairs(BROWSE_WINDOWS) do
+                if bw.HiddenWithUI then
+                    bw.HiddenWithUI = false
+                    bw.Frame.Visible = true
+                end
+            end
             Main.Position = lastMainPosition + UDim2.fromOffset(0, 30)
             TweenService:Create(Main, TWEEN_SLOW, {Position = lastMainPosition}):Play()
         else
             lastMainPosition = Main.Position
             closeAllPopups()
             closeActiveDialog()
+            for _, bw in ipairs(BROWSE_WINDOWS) do
+                if bw.Frame.Visible then
+                    bw.HiddenWithUI = true
+                    bw.Frame.Visible = false
+                end
+            end
             Main.Visible = false
             OpenButton.Visible = true
             Notify({Title = "Menu hidden", Content = "Click 'Open " .. BRAND_NAME .. "' to show it again", Icon = "eye", Duration = 3})
@@ -5988,6 +6514,37 @@ local KEY_ALIASES = {
         --[[ Browse tab: a full-width gallery (search, category chips, sort,
             pagination, grid of cards). Items can be a table, a loader function
             or a JSON API url, so one script serves every user. ]]
+        --[[ Browse in its own window (no sidebar tab). Returns the same Browse
+            handle plus Open / Close / Toggle / IsOpen / SetTitle / SetCount.
+            Opens on Browse:Open(), e.g. from a button or toggle, or on `ToggleKey`;
+            `Visible = true` opens it right away. ]]
+        function Window:CreateBrowseWindow(browseOptions)
+            local bOpts = type(browseOptions) == "table" and browseOptions or {Name = tostring(browseOptions or "Browse")}
+            local win, host = createBrowseWindow(bOpts)
+            local browse = buildBrowsePanel(nil, bOpts, host)
+            browse.Window = win
+            browse.Name = bOpts.Name or bOpts.Title or "Browse"
+            browse.Mode = "Window"
+            function browse:Open() win.Open() end
+            function browse:Close() win.Close() end
+            function browse:Toggle(visible) win.Toggle(visible) end
+            function browse:IsOpen() return win.IsOpen() end
+            function browse:Select() win.Open() end
+            function browse:SetTitle(text) win.SetTitle(text) end
+            function browse:SetDescription(text) win.SetDescription(text) end
+            function browse:SetCount(n) win.SetCount(n) end
+            function browse:SetPosition(pos) win.SetPosition(pos) end
+            function browse:SetSize(w, h) win.SetSize(w, h) end
+            browse.Show = browse.Open
+            browse.Hide = browse.Close
+            if bOpts.Visible == true or bOpts.Open == true then
+                task.defer(win.Open)
+            end
+            return browse
+        end
+        Window.CreateBrowsePopup = Window.CreateBrowseWindow
+        Window.CreateGalleryWindow = Window.CreateBrowseWindow
+
         function Window:CreateBrowseTab(browseOptions, iconMaybe)
             local bOpts = {}
             if type(browseOptions) == "string" then
@@ -5996,11 +6553,18 @@ local KEY_ALIASES = {
             elseif type(browseOptions) == "table" then
                 bOpts = browseOptions
             end
+            local mode = string.lower(tostring(bOpts.Mode or bOpts.Type or "tab"))
+            if mode == "window" or mode == "popup" or mode == "float" then
+                return Window:CreateBrowseWindow(bOpts)
+            end
             local tab = Window:CreateTab(bOpts.Name or bOpts.Title or "Browse", bOpts.Icon or "store")
             local browse = buildBrowsePanel(tab.Name, bOpts)
             browse.Tab = tab
             browse.Name = tab.Name
+            browse.Mode = "Tab"
             function browse:Select() tab:Select() end
+            function browse:Open() tab:Select() end
+            function browse:IsOpen() return activeSidebarTab ~= nil and activeSidebarTab.Name == tab.Name end
             if activeSidebarTab then
                 showTabContent(activeSidebarTab.Name)
             end
@@ -6088,6 +6652,35 @@ local KEY_ALIASES = {
         function Window:Destroy()
             unloadScript()
         end
+
+        --[[ Shared internals for companion scripts (MacrOS-style `MacrOSUI.Theme`,
+            `MacrOSUI.BindColor`, `MacrOSUI.ResolveIcon`, `MacrOSUI.LogoAsset` ...).
+            Everything here is the live object the window itself uses. ]]
+        Window.Theme = THEME
+        Window.BindColor = bindColor
+        Window.TweenColors = tweenColors
+        Window.RefreshTheme = refreshTheme
+        Window.ResolveIcon = resolveIcon
+        Window.TintIcon = tintIcon
+        Window.Icons = LUCIDE
+        Window.LogoAsset = LOGO_ASSET
+        Window.ScreenGui = ScreenGui
+        Window.Main = Main
+        Window.HttpGet = httpGet
+        Window.CreateBrowsePanel = function(_, parentFrame, bOpts)
+            -- gallery panel inside any frame of your own (no tab, no window)
+            return buildBrowsePanel(nil, bOpts or {}, {Parent = parentFrame})
+        end
+        for _, key in ipairs({"Theme", "BindColor", "TweenColors", "RefreshTheme", "ResolveIcon", "TintIcon",
+            "Icons", "LogoAsset", "ScreenGui", "Main", "HttpGet"}) do
+            Library[key] = Window[key]
+        end
+        Library.httpGet = httpGet
+        Library.Notify = function(opts) return Notify(opts) end
+        Library.CreateDialog = function(_, dOpts) return createDialog(type(_) == "table" and _ ~= Library and _ or dOpts) end
+        Library.Dialog = Library.CreateDialog
+        Library.Window = Window
+        Library.GetWindow = function() return Window end
 
         return Window
 
