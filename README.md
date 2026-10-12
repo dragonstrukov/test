@@ -52,6 +52,7 @@ Window methods:
 | `Window:CreateTab(name, icon)` / `Window:CreateTab({Name, Icon})` | Tab, returns `Tab` |
 | `Window:CreateThemeTab(name, icon)` | Tab with the theme list + custom theme editor |
 | `Window:CreateBrowseTab(opts)` | Full-width gallery tab (search, categories, sort, pages, cards). See [Browse](#browse) |
+| `Window:CreateDialog(opts)` / `Window:CloseDialog()` | Centered modal card with pictures, info lines and buttons. See [Dialog](#dialog) |
 | `Window:Notify({Title, Content, Duration, Icon})` | Notification (icon is a Lucide name) |
 | `Window:CreateKeybindList(opts)` | Draggable Keybinds overlay (also `GetKeybindList`, `SetKeybindListVisible`) |
 | `Window:SetTheme(name)` / `Window:SetTheme(name, true)` | Switch theme (2nd arg = silent, no notification) |
@@ -182,9 +183,76 @@ Browse:GetItems() / Browse:GetFiltered() / Browse:GetSelected() / Browse:GetPage
 Browse:SetCallback(fn) / Browse:SetStatus("text") / Browse:Select()
 ```
 
+### Item details
+
+With a `Details` option a click on a card opens a [dialog](#dialog) instead of
+calling `Callback` right away:
+
+```lua
+Details = true, -- default dialog: title, pictures, "★ 85%" badge, author/category/description, "Select" button -> Callback
+
+Details = function(item, browse)   -- or a table with the same fields
+    return {
+        HeaderButtons = { { Text = "Grid", Close = true } },
+        Tag = "Catalog #" .. item.Id,
+        Badge = ("★ %d%% · %s"):format(item.Rating or 0, item.Author),
+        Lines = {
+            { Text = item.Category .. " · by " .. item.Author, Icon = "tag" },
+            { Text = "Missing: 11 blocks", Icon = "alert-triangle", Color = "Accent" },
+        },
+        Buttons = {
+            { Text = "Build Now", Icon = "hammer", Primary = true, Close = true, Callback = function(item, dialog) end },
+            { { Text = "3D Preview", Icon = "eye" }, { Text = "Save to Files", Icon = "save" } }, -- one row
+            { Text = "Auto-Swap Missing Blocks", Icon = "zap", Accent = true },
+        },
+    }
+end,
+```
+
+Anything you leave out comes from the default dialog. Button callbacks get
+`(item, dialog)`. `Browse:ShowDetails(item)`, `Browse:CloseDetails()` and
+`Browse:SetDetails(spec)` control it from code; `OnDetails(item, dialog)` is
+called whenever a dialog opens.
+
 `OnLoad(items)`, `OnError(err)` and `OnRefresh()` options are called around
 API requests. [browse.json](browse.json) is a ready-made example feed and
 [Example.lua](Example.lua) shows it wired to `loadstring(game:HttpGet(item.Data))()`.
+
+## Dialog
+
+```lua
+local dialog = Window:CreateDialog({
+    Title = "jet 1485759085486932068",
+    HeaderButtons = { { Text = "Grid", Callback = function(dialog) end, Close = true } },
+    Images = { "rbxassetid://1", "rbxassetid://2", "rbxassetid://3", "rbxassetid://4" }, -- 1–4, laid out 1 / 2 / 2x2
+    Fit = false,              -- true = no cropping (icons)
+    ImageHeight = 170,
+    Tag = "Catalog #1",       -- top-left pill over the pictures
+    Badge = "★ 85% · 18 594", -- top-right pill (RichText allowed)
+    Lines = {
+        "1153 blocks · 18 594",
+        { Text = "Missing: Delay 0/5, Hinge 0/2 +11 more", Icon = "alert-triangle", Color = "Accent" },
+    },
+    Buttons = {
+        { Text = "Build Now", Icon = "hammer", Primary = true, Close = true, Callback = function(dialog) end },
+        { { Text = "3D Preview", Icon = "eye" }, { Text = "Save to Files", Icon = "save" } },
+        { Text = "Auto-Swap Missing Blocks", Icon = "zap", Accent = true, Id = "swap" },
+    },
+    Width = 320,
+    CloseOnBackdrop = true,
+    OnClose = function() end,
+})
+
+dialog:SetTitle("...") / dialog:SetLines({ ... }) / dialog:SetTag("...") / dialog:SetBadge("...")
+dialog:GetButton(1):SetText("Building...")   -- by index or by `Id`
+dialog:GetButton("swap"):SetEnabled(false)
+dialog:IsOpen() / dialog:Close()
+```
+
+Button styles: `Primary = true` (filled accent), `Accent = true` (accent text),
+default (neutral). `Close = true` closes the dialog after the callback. Only one
+dialog is open at a time; Esc, the ✕ button and a click on the backdrop close it.
+The header can be dragged.
 
 ## Keybind list
 

@@ -3968,6 +3968,508 @@ local KEY_ALIASES = {
         end},
     }
 
+    --[[ Dialog --------------------------------------------------------------
+        A centered modal card: title + header buttons + close, an image block
+        (1-4 pictures with a tag and a badge over it), info lines and stacked
+        action buttons (single or two per row). Used by the Browse tab for item
+        details and available directly as Window:CreateDialog(opts). ]]
+    local DIALOG_W = 320
+    local DIALOG_BTN_H = 34
+    local activeDialog = nil
+
+    local function closeActiveDialog()
+        local d = activeDialog
+        activeDialog = nil
+        if d then d.Close() end
+    end
+
+    local function dialogTextOf(def)
+        if type(def) == "table" then return tostring(def.Text or def.Title or def.Name or "") end
+        return tostring(def or "")
+    end
+
+    local function createDialog(dOpts)
+        dOpts = dOpts or {}
+        closeActiveDialog()
+        closeAllPopups()
+        local width = tonumber(dOpts.Width) or DIALOG_W
+        local connections = {}
+        local closed = false
+        local handle = {}
+
+        local overlay = Instance.new("TextButton")
+        overlay.Name = "DialogOverlay"
+        overlay.Size = UDim2.new(1, 0, 1, 0)
+        overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+        overlay.BackgroundTransparency = 1
+        overlay.BorderSizePixel = 0
+        overlay.Text = ""
+        overlay.AutoButtonColor = false
+        overlay.ZIndex = 149
+        overlay.Parent = ScreenGui
+        TweenService:Create(overlay, TWEEN_FAST, {BackgroundTransparency = dOpts.Dim == false and 1 or 0.45}):Play()
+
+        local box = Instance.new("Frame")
+        box.Name = "Dialog"
+        box.Size = UDim2.new(0, width, 0, 0)
+        box.AutomaticSize = Enum.AutomaticSize.Y
+        box.AnchorPoint = Vector2.new(0.5, 0.5)
+        bindColor(box, "BackgroundColor3", "Background")
+        box.BorderSizePixel = 0
+        box.ZIndex = 150
+        box.Parent = ScreenGui
+        scalePopup(box)
+        addCorner(box, 12)
+        local boxStroke = addStroke(box, 1.2)
+        bindColor(boxStroke, "Color", "BorderActive")
+
+        do -- center over the main window
+            local center = Main.AbsolutePosition - ScreenGui.AbsolutePosition + Main.AbsoluteSize / 2
+            box.Position = UDim2.fromOffset(center.X, center.Y + 16)
+            TweenService:Create(box, TWEEN_SLOW, {Position = UDim2.fromOffset(center.X, center.Y)}):Play()
+        end
+
+        local pad = Instance.new("UIPadding")
+        pad.PaddingTop = UDim.new(0, 10)
+        pad.PaddingBottom = UDim.new(0, 12)
+        pad.PaddingLeft = UDim.new(0, 12)
+        pad.PaddingRight = UDim.new(0, 12)
+        pad.Parent = box
+
+        local list = Instance.new("UIListLayout")
+        list.SortOrder = Enum.SortOrder.LayoutOrder
+        list.Padding = UDim.new(0, 8)
+        list.Parent = box
+
+        local order = 0
+        local function nextOrder() order = order + 1 return order end
+
+        -- Header ------------------------------------------------------------------
+        local header = Instance.new("Frame")
+        header.Size = UDim2.new(1, 0, 0, 24)
+        header.BackgroundTransparency = 1
+        header.LayoutOrder = nextOrder()
+        header.ZIndex = 151
+        header.Parent = box
+
+        local headerRight = Instance.new("Frame")
+        headerRight.Size = UDim2.new(0, 0, 1, 0)
+        headerRight.AutomaticSize = Enum.AutomaticSize.X
+        headerRight.AnchorPoint = Vector2.new(1, 0)
+        headerRight.Position = UDim2.new(1, 0, 0, 0)
+        headerRight.BackgroundTransparency = 1
+        headerRight.ZIndex = 151
+        headerRight.Parent = header
+        local hrLayout = Instance.new("UIListLayout")
+        hrLayout.FillDirection = Enum.FillDirection.Horizontal
+        hrLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        hrLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+        hrLayout.Padding = UDim.new(0, 6)
+        hrLayout.Parent = headerRight
+
+        local title = Instance.new("TextLabel")
+        title.Size = UDim2.new(1, -40, 1, 0)
+        title.BackgroundTransparency = 1
+        title.Text = dialogTextOf(dOpts.Title ~= nil and dOpts.Title or "Details")
+        title.Font = Enum.Font.GothamBold
+        title.TextSize = 12
+        bindColor(title, "TextColor3", "TextPrimary")
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.TextTruncate = Enum.TextTruncate.AtEnd
+        title.ZIndex = 151
+        title.Parent = header
+        headerRight:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+            title.Size = UDim2.new(1, -(headerRight.AbsoluteSize.X / math.max(UI_SCALE, 0.01) + 8), 1, 0)
+        end)
+
+        local function smallPill(parent, text, orderIdx)
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(0, 0, 0, 22)
+            btn.AutomaticSize = Enum.AutomaticSize.X
+            btn.LayoutOrder = orderIdx
+            bindColor(btn, "BackgroundColor3", "BadgeBg")
+            btn.BorderSizePixel = 0
+            btn.Text = ""
+            btn.AutoButtonColor = false
+            btn.ZIndex = 152
+            btn.Parent = parent
+            addCorner(btn, 6)
+            local stroke = addStroke(btn, 1)
+            local p = Instance.new("UIPadding")
+            p.PaddingLeft = UDim.new(0, 9)
+            p.PaddingRight = UDim.new(0, 9)
+            p.Parent = btn
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(0, 0, 1, 0)
+            lbl.AutomaticSize = Enum.AutomaticSize.X
+            lbl.BackgroundTransparency = 1
+            lbl.Text = text
+            lbl.Font = Enum.Font.GothamMedium
+            lbl.TextSize = 10.5
+            bindColor(lbl, "TextColor3", "TextPrimary")
+            lbl.ZIndex = 153
+            lbl.Parent = btn
+            btn.MouseEnter:Connect(function() tweenColors(stroke, TWEEN_FAST, {Color = "BorderActive"}):Play() end)
+            btn.MouseLeave:Connect(function() tweenColors(stroke, TWEEN_FAST, {Color = "Border"}):Play() end)
+            return btn
+        end
+
+        local headerIdx = 0
+        for _, def in ipairs(dOpts.HeaderButtons or {}) do
+            headerIdx = headerIdx + 1
+            local btn = smallPill(headerRight, dialogTextOf(def), headerIdx)
+            btn.MouseButton1Click:Connect(function()
+                if type(def) == "table" and def.Callback then task.spawn(def.Callback, handle) end
+                if type(def) == "table" and def.Close then handle.Close() end
+            end)
+        end
+
+        local closeBtn = Instance.new("ImageButton")
+        closeBtn.Size = UDim2.new(0, 22, 0, 22)
+        closeBtn.LayoutOrder = headerIdx + 1
+        bindColor(closeBtn, "BackgroundColor3", "BadgeBg")
+        closeBtn.BorderSizePixel = 0
+        closeBtn.AutoButtonColor = false
+        closeBtn.Image = ""
+        closeBtn.ZIndex = 152
+        closeBtn.Parent = headerRight
+        addCorner(closeBtn, 6)
+        addStroke(closeBtn, 1)
+        local closeIcon = Instance.new("ImageLabel")
+        closeIcon.Size = UDim2.new(0, 11, 0, 11)
+        closeIcon.Position = UDim2.new(0.5, -5.5, 0.5, -5.5)
+        closeIcon.BackgroundTransparency = 1
+        closeIcon.Image = resolveIcon("x")
+        tintIcon(closeIcon, "x", "TextMuted")
+        closeIcon.ZIndex = 153
+        closeIcon.Parent = closeBtn
+        closeBtn.MouseEnter:Connect(function() tweenColors(closeIcon, TWEEN_FAST, {ImageColor3 = "Accent"}):Play() end)
+        closeBtn.MouseLeave:Connect(function() tweenColors(closeIcon, TWEEN_FAST, {ImageColor3 = "TextMuted"}):Play() end)
+
+        -- Images ------------------------------------------------------------------
+        local images = {}
+        if type(dOpts.Images) == "table" then
+            for _, src in ipairs(dOpts.Images) do
+                if src ~= nil and src ~= "" then table.insert(images, src) end
+            end
+        elseif dOpts.Image ~= nil and dOpts.Image ~= "" then
+            images[1] = dOpts.Image
+        end
+
+        local tagLabel, badgeLabel
+        if #images > 0 or dOpts.Tag or dOpts.Badge then
+            local area = Instance.new("Frame")
+            area.Size = UDim2.new(1, 0, 0, tonumber(dOpts.ImageHeight) or 170)
+            bindColor(area, "BackgroundColor3", "PillBg")
+            area.BorderSizePixel = 0
+            area.ClipsDescendants = true
+            area.LayoutOrder = nextOrder()
+            area.ZIndex = 151
+            area.Parent = box
+            addCorner(area, 8)
+            addStroke(area, 1)
+
+            local count = math.min(#images, 4)
+            local cols = (count <= 1) and 1 or 2
+            local rows = (count <= 2) and 1 or 2
+            for i = 1, count do
+                local c = (i - 1) % cols
+                local r = math.floor((i - 1) / cols)
+                local img = Instance.new("ImageLabel")
+                img.BackgroundTransparency = 1
+                img.ScaleType = dOpts.Fit and Enum.ScaleType.Fit or Enum.ScaleType.Crop
+                if dOpts.Fit then
+                    img.Size = UDim2.new(1 / cols, -24, 1 / rows, -24)
+                    img.Position = UDim2.new(c / cols, 12, r / rows, 12)
+                else
+                    img.Size = UDim2.new(1 / cols, (cols > 1) and -1 or 0, 1 / rows, (rows > 1) and -1 or 0)
+                    img.Position = UDim2.new(c / cols, (c > 0) and 1 or 0, r / rows, (r > 0) and 1 or 0)
+                end
+                img.ZIndex = 152
+                img.Parent = area
+                local src = images[i]
+                if type(src) == "string" and string.match(src, "^https?://") then
+                    task.spawn(function()
+                        local asset = resolveBrowseImage(src)
+                        if img.Parent then img.Image = asset end
+                    end)
+                else
+                    img.Image = resolveBrowseImage(src)
+                end
+            end
+
+            local function overlayPill(anchorX, text, colorKey)
+                local pill = Instance.new("Frame")
+                pill.Size = UDim2.new(0, 0, 0, 18)
+                pill.AutomaticSize = Enum.AutomaticSize.X
+                pill.AnchorPoint = Vector2.new(anchorX, 0)
+                pill.Position = UDim2.new(anchorX, anchorX > 0 and -8 or 8, 0, 8)
+                bindColor(pill, "BackgroundColor3", "Background")
+                pill.BackgroundTransparency = 0.2
+                pill.BorderSizePixel = 0
+                pill.ZIndex = 153
+                pill.Visible = text ~= nil and text ~= ""
+                pill.Parent = area
+                addCorner(pill, 5)
+                local p = Instance.new("UIPadding")
+                p.PaddingLeft = UDim.new(0, 7)
+                p.PaddingRight = UDim.new(0, 7)
+                p.Parent = pill
+                local lbl = Instance.new("TextLabel")
+                lbl.Size = UDim2.new(0, 0, 1, 0)
+                lbl.AutomaticSize = Enum.AutomaticSize.X
+                lbl.BackgroundTransparency = 1
+                lbl.Text = text or ""
+                lbl.RichText = true
+                lbl.Font = Enum.Font.GothamBold
+                lbl.TextSize = 10
+                bindColor(lbl, "TextColor3", colorKey)
+                lbl.ZIndex = 154
+                lbl.Parent = pill
+                return lbl, pill
+            end
+            tagLabel = overlayPill(0, dOpts.Tag and tostring(dOpts.Tag) or nil, "Accent")
+            badgeLabel = overlayPill(1, dOpts.Badge and tostring(dOpts.Badge) or nil, "TextPrimary")
+        end
+
+        -- Lines -------------------------------------------------------------------
+        local linesHolder = Instance.new("Frame")
+        linesHolder.Size = UDim2.new(1, 0, 0, 0)
+        linesHolder.AutomaticSize = Enum.AutomaticSize.Y
+        linesHolder.BackgroundTransparency = 1
+        linesHolder.LayoutOrder = nextOrder()
+        linesHolder.ZIndex = 151
+        linesHolder.Parent = box
+        local linesLayout = Instance.new("UIListLayout")
+        linesLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        linesLayout.Padding = UDim.new(0, 3)
+        linesLayout.Parent = linesHolder
+
+        local function setLines(lines)
+            for _, child in ipairs(linesHolder:GetChildren()) do
+                if child:IsA("Frame") then child:Destroy() end
+            end
+            if type(lines) == "string" then lines = {lines} end
+            for i, def in ipairs(lines or {}) do
+                local text = dialogTextOf(def)
+                local iconName = type(def) == "table" and def.Icon or nil
+                local colorKey = type(def) == "table" and def.Color or "TextMuted"
+                local row = Instance.new("Frame")
+                row.Size = UDim2.new(1, 0, 0, 16)
+                row.BackgroundTransparency = 1
+                row.LayoutOrder = i
+                row.ZIndex = 151
+                row.Parent = linesHolder
+                local inset = 0
+                if iconName then
+                    local ic = Instance.new("ImageLabel")
+                    ic.Size = UDim2.new(0, 12, 0, 12)
+                    ic.Position = UDim2.new(0, 0, 0.5, -6)
+                    ic.BackgroundTransparency = 1
+                    ic.Image = resolveIcon(iconName)
+                    tintIcon(ic, iconName, colorKey)
+                    ic.ZIndex = 152
+                    ic.Parent = row
+                    inset = 17
+                end
+                local lbl = Instance.new("TextLabel")
+                lbl.Size = UDim2.new(1, -inset, 1, 0)
+                lbl.Position = UDim2.new(0, inset, 0, 0)
+                lbl.BackgroundTransparency = 1
+                lbl.Text = text
+                lbl.RichText = true
+                lbl.Font = Enum.Font.Gotham
+                lbl.TextSize = 10.5
+                bindColor(lbl, "TextColor3", colorKey)
+                lbl.TextXAlignment = Enum.TextXAlignment.Left
+                lbl.TextTruncate = Enum.TextTruncate.AtEnd
+                lbl.ZIndex = 152
+                lbl.Parent = row
+            end
+            linesHolder.Visible = #(lines or {}) > 0
+        end
+        setLines(dOpts.Lines or dOpts.Info or dOpts.Content)
+
+        -- Buttons -----------------------------------------------------------------
+        local buttonHandles = {}
+
+        local function makeButton(parent, def, widthScale, widthOffset, orderIdx)
+            local style = (def.Primary and "primary") or (def.Accent and "accent") or (def.Style and string.lower(tostring(def.Style))) or "default"
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(widthScale, widthOffset, 0, DIALOG_BTN_H)
+            btn.LayoutOrder = orderIdx
+            btn.BorderSizePixel = 0
+            btn.Text = ""
+            btn.AutoButtonColor = false
+            btn.ZIndex = 152
+            btn.Parent = parent
+            addCorner(btn, 8)
+            local stroke = addStroke(btn, 1)
+            local textKey, bgKey, hoverBg
+            if style == "primary" then
+                bgKey, textKey, hoverBg = "Accent", "KnobOn", "AccentSoft"
+                stroke.Transparency = 1
+            elseif style == "accent" then
+                bgKey, textKey, hoverBg = "BadgeBg", "Accent", "SidebarActive"
+            else
+                bgKey, textKey, hoverBg = "BadgeBg", "TextPrimary", "SidebarActive"
+            end
+            bindColor(btn, "BackgroundColor3", bgKey)
+
+            local inner = Instance.new("Frame")
+            inner.Size = UDim2.new(0, 0, 1, 0)
+            inner.AutomaticSize = Enum.AutomaticSize.X
+            inner.AnchorPoint = Vector2.new(0.5, 0)
+            inner.Position = UDim2.new(0.5, 0, 0, 0)
+            inner.BackgroundTransparency = 1
+            inner.ZIndex = 153
+            inner.Parent = btn
+            local il = Instance.new("UIListLayout")
+            il.FillDirection = Enum.FillDirection.Horizontal
+            il.SortOrder = Enum.SortOrder.LayoutOrder
+            il.VerticalAlignment = Enum.VerticalAlignment.Center
+            il.Padding = UDim.new(0, 7)
+            il.Parent = inner
+
+            local icon
+            if def.Icon then
+                icon = Instance.new("ImageLabel")
+                icon.Size = UDim2.new(0, 13, 0, 13)
+                icon.LayoutOrder = 1
+                icon.BackgroundTransparency = 1
+                icon.Image = resolveIcon(def.Icon)
+                tintIcon(icon, def.Icon, textKey)
+                icon.ZIndex = 154
+                icon.Parent = inner
+            end
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(0, 0, 1, 0)
+            lbl.AutomaticSize = Enum.AutomaticSize.X
+            lbl.LayoutOrder = 2
+            lbl.BackgroundTransparency = 1
+            lbl.Text = dialogTextOf(def)
+            lbl.Font = Enum.Font.GothamBold
+            lbl.TextSize = 11.5
+            bindColor(lbl, "TextColor3", textKey)
+            lbl.ZIndex = 154
+            lbl.Parent = inner
+
+            btn.MouseEnter:Connect(function()
+                tweenColors(btn, TWEEN_FAST, {BackgroundColor3 = hoverBg}):Play()
+                if style ~= "primary" then tweenColors(stroke, TWEEN_FAST, {Color = "BorderActive"}):Play() end
+            end)
+            btn.MouseLeave:Connect(function()
+                tweenColors(btn, TWEEN_FAST, {BackgroundColor3 = bgKey}):Play()
+                if style ~= "primary" then tweenColors(stroke, TWEEN_FAST, {Color = "Border"}):Play() end
+            end)
+            local function fire()
+                if def.Callback then task.spawn(def.Callback, handle) end
+                if def.Close then handle.Close() end
+            end
+            btn.MouseButton1Click:Connect(fire)
+            local h = {
+                Button = btn,
+                Fire = fire,
+                SetText = function(t) lbl.Text = tostring(t) end,
+                SetEnabled = function(on)
+                    btn.Active = on ~= false
+                    btn.BackgroundTransparency = (on == false) and 0.5 or 0
+                    lbl.TextTransparency = (on == false) and 0.5 or 0
+                end,
+            }
+            wrapHandle(h)
+            if def.Id or def.Flag then buttonHandles[def.Id or def.Flag] = h end
+            table.insert(buttonHandles, h)
+            return btn
+        end
+
+        for _, def in ipairs(dOpts.Buttons or {}) do
+            if type(def) == "table" and def[1] ~= nil then -- a row of buttons
+                local row = Instance.new("Frame")
+                row.Size = UDim2.new(1, 0, 0, DIALOG_BTN_H)
+                row.BackgroundTransparency = 1
+                row.LayoutOrder = nextOrder()
+                row.ZIndex = 151
+                row.Parent = box
+                local rl = Instance.new("UIListLayout")
+                rl.FillDirection = Enum.FillDirection.Horizontal
+                rl.SortOrder = Enum.SortOrder.LayoutOrder
+                rl.Padding = UDim.new(0, 8)
+                rl.Parent = row
+                local n = #def
+                for i, sub in ipairs(def) do
+                    if type(sub) == "string" then sub = {Text = sub} end
+                    makeButton(row, sub, 1 / n, -(8 * (n - 1)) / n, i)
+                end
+            elseif def ~= nil then
+                if type(def) == "string" then def = {Text = def} end
+                local btn = makeButton(box, def, 1, 0, nextOrder())
+                btn.LayoutOrder = order
+            end
+        end
+
+        -- Behaviour ---------------------------------------------------------------
+        do -- drag by the header
+            local dragging, dragStart, startPos = false, nil, nil
+            header.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    dragging = true
+                    dragStart = input.Position
+                    startPos = box.Position
+                end
+            end)
+            table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+                if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                    local delta = input.Position - dragStart
+                    box.Position = UDim2.fromOffset(startPos.X.Offset + delta.X, startPos.Y.Offset + delta.Y)
+                end
+            end))
+            table.insert(connections, UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    dragging = false
+                end
+            end))
+        end
+
+        function handle.Close()
+            if closed then return end
+            closed = true
+            if activeDialog == handle then activeDialog = nil end
+            for _, c in ipairs(connections) do c:Disconnect() end
+            connections = {}
+            TweenService:Create(overlay, TWEEN_FAST, {BackgroundTransparency = 1}):Play()
+            local t = TweenService:Create(box, TWEEN_FAST, {Position = box.Position + UDim2.fromOffset(0, 12)})
+            t:Play()
+            task.delay(0.2, function()
+                overlay:Destroy()
+                box:Destroy()
+            end)
+            if dOpts.OnClose then task.spawn(dOpts.OnClose) end
+        end
+        function handle.IsOpen() return not closed end
+        function handle.SetTitle(text) title.Text = tostring(text) end
+        function handle.SetLines(lines) setLines(lines) end
+        function handle.SetTag(text) if tagLabel then tagLabel.Text = tostring(text or "") tagLabel.Parent.Visible = text ~= nil and text ~= "" end end
+        function handle.SetBadge(text) if badgeLabel then badgeLabel.Text = tostring(text or "") badgeLabel.Parent.Visible = text ~= nil and text ~= "" end end
+        function handle.GetButton(idOrIndex) return buttonHandles[idOrIndex] end
+        handle.Buttons = buttonHandles
+        handle.Frame = box
+        handle.Data = dOpts.Data
+
+        if dOpts.CloseOnBackdrop ~= false then
+            overlay.MouseButton1Click:Connect(function() handle.Close() end)
+        end
+        closeBtn.MouseButton1Click:Connect(function() handle.Close() end)
+        table.insert(connections, UserInputService.InputBegan:Connect(function(input, gp)
+            if gp then return end
+            if input.KeyCode == Enum.KeyCode.Escape then handle.Close() end
+        end))
+        trackConn(connections[#connections])
+
+        activeDialog = handle
+        return wrapHandle(handle)
+    end
+
     local function buildBrowsePanel(tabName, opts)
         opts = opts or {}
         local columns = math.max(1, math.floor(tonumber(opts.Columns) or 3))
@@ -3977,6 +4479,7 @@ local KEY_ALIASES = {
         local parse = opts.Parse or opts.Transform
         local source = opts.Source or opts.Url or opts.Api or opts.API
         local fetcher = opts.Fetch or opts.Loader
+        local detailsOpt = opts.Details or opts.Dialog
         local placeholderIcon = opts.PlaceholderIcon or "image"
         local imageScale = (tostring(opts.ImageScaleType or opts.ImageScale or "Crop"):lower() == "fit")
             and Enum.ScaleType.Fit or Enum.ScaleType.Crop
@@ -3995,6 +4498,7 @@ local KEY_ALIASES = {
             table.insert(sortModes, {Name = "Hot", Icon = "zap", Sort = BROWSE_SORTS.Hot.Sort})
         end
 
+        local showDetails -- defined after the card helpers
         local state = {
             Items = {},
             Filtered = {},
@@ -4235,6 +4739,93 @@ local KEY_ALIASES = {
             return string.format("%d%%", math.floor(r + 0.5))
         end
 
+        --[[ Item details dialog. `Details` can be:
+              true                     -> default dialog (title, pictures, rating badge, info, Select button)
+              table                    -> overrides for the default; function fields are called with (item)
+              function(item, Browse)   -> returns such a table (or nil for the default)
+            Button callbacks receive (item, dialog). ]]
+        local function defaultDetails(item)
+            local lines = {}
+            if item.Author then table.insert(lines, {Text = "by " .. tostring(item.Author), Icon = "user"}) end
+            if item.Category and item.Category ~= "" then table.insert(lines, {Text = tostring(item.Category), Icon = "tag"}) end
+            if item.Description then table.insert(lines, {Text = tostring(item.Description), Icon = "info"}) end
+            local ratingText = formatRating(item.Rating)
+            return {
+                Title = item.Name,
+                Images = item.Images,
+                Fit = item.Fit,
+                Tag = item.Category,
+                Badge = ratingText and ("★ " .. ratingText) or nil,
+                Lines = lines,
+                Buttons = {
+                    {Text = opts.SelectText or "Select", Icon = "check", Primary = true, Close = true, UseCallback = true},
+                },
+            }
+        end
+
+        local Browse = {} -- filled below; needed by the Details callback
+
+        showDetails = function(item, overrides)
+            if not item then return nil end
+            item = normalizeBrowseItem(item, 0)
+            local spec = defaultDetails(item)
+            local user = overrides
+            if user == nil then
+                if type(detailsOpt) == "function" then
+                    local ok, res = pcall(detailsOpt, item, Browse)
+                    if ok and type(res) == "table" then user = res end
+                elseif type(detailsOpt) == "table" then
+                    user = detailsOpt
+                end
+            end
+            if type(user) == "table" then
+                for key, value in pairs(user) do
+                    if type(value) == "function" and key ~= "OnClose" then
+                        local ok, res = pcall(value, item, Browse)
+                        if ok then spec[key] = res end
+                    else
+                        spec[key] = value
+                    end
+                end
+            end
+            -- wire callbacks: button Callback(item, dialog); default Select -> Browse Callback
+            local function wire(def)
+                if type(def) ~= "table" then return def end
+                local cb = def.Callback
+                local copy = {}
+                for k, v in pairs(def) do copy[k] = v end
+                copy.Callback = function(dialog)
+                    if cb then
+                        cb(item, dialog)
+                    elseif def.UseCallback and callback then
+                        callback(item, item.Raw)
+                    end
+                end
+                return copy
+            end
+            local wiredButtons = {}
+            for i, def in ipairs(spec.Buttons or {}) do
+                if type(def) == "table" and def[1] ~= nil then
+                    local row = {}
+                    for j, sub in ipairs(def) do row[j] = wire(type(sub) == "string" and {Text = sub} or sub) end
+                    wiredButtons[i] = row
+                else
+                    wiredButtons[i] = wire(type(def) == "string" and {Text = def} or def)
+                end
+            end
+            spec.Buttons = wiredButtons
+            local wiredHeader = {}
+            for i, def in ipairs(spec.HeaderButtons or {}) do
+                wiredHeader[i] = wire(type(def) == "string" and {Text = def} or def)
+            end
+            spec.HeaderButtons = wiredHeader
+            spec.Data = item
+            state.Selected = item
+            local dialog = createDialog(spec)
+            if opts.OnDetails then task.spawn(opts.OnDetails, item, dialog) end
+            return dialog
+        end
+
         local function fillThumb(thumb, item, generation)
             for _, child in ipairs(thumb:GetChildren()) do
                 if child:IsA("ImageLabel") then child:Destroy() end
@@ -4375,7 +4966,9 @@ local KEY_ALIASES = {
                 for _, other in ipairs(cardPool) do
                     tweenColors(other.Stroke, TWEEN_FAST, {Color = (other.Item == entry.Item) and "Accent" or "Border"}):Play()
                 end
-                if callback then
+                if detailsOpt then
+                    showDetails(entry.Item)
+                elseif callback then
                     task.spawn(callback, entry.Item, entry.Item.Raw)
                 end
             end)
@@ -4711,8 +5304,10 @@ local KEY_ALIASES = {
         end
 
         -- public handle ------------------------------------------------------------
-        local Browse = {}
         Browse.Panel = Panel
+        function Browse:ShowDetails(item, overrides) return showDetails(item or state.Selected, overrides) end
+        function Browse:CloseDetails() closeActiveDialog() end
+        function Browse:SetDetails(details) detailsOpt = details end
         function Browse:SetItems(list) setItems(list or {}) end
         function Browse:AddItem(raw)
             local item = normalizeBrowseItem(raw, #state.Items + 1)
@@ -4954,6 +5549,7 @@ local KEY_ALIASES = {
         else
             lastMainPosition = Main.Position
             closeAllPopups()
+            closeActiveDialog()
             Main.Visible = false
             OpenButton.Visible = true
             Notify({Title = "Menu hidden", Content = "Click 'Open " .. BRAND_NAME .. "' to show it again", Icon = "eye", Duration = 3})
@@ -5411,6 +6007,16 @@ local KEY_ALIASES = {
             return browse
         end
         Window.CreateGalleryTab = Window.CreateBrowseTab
+
+        -- Modal dialog: {Title, Images, Tag, Badge, Lines, Buttons, HeaderButtons, Width, OnClose}
+        function Window:CreateDialog(dialogOptions)
+            return createDialog(dialogOptions)
+        end
+        Window.Dialog = Window.CreateDialog
+        Window.ShowDialog = Window.CreateDialog
+        function Window:CloseDialog()
+            closeActiveDialog()
+        end
         Window.CreateBrowser = Window.CreateBrowseTab
         Window.AddBrowseTab = Window.CreateBrowseTab
 

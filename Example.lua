@@ -162,6 +162,20 @@ local BROWSE_FALLBACK = {
     { Name = "Noclip",        Category = "Movement",  Rating = 77, Author = "dragonstrukov", Image = "rbxassetid://113822048130017", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
 }
 
+-- Runs a script from the feed (item.Data = "url" field of the JSON)
+local function runScript(item)
+    if not item.Data then return end
+    Window:Notify({ Title = "Browse", Content = "Loading " .. item.Name .. "...", Icon = "download", Duration = 2 })
+    task.spawn(function()
+        local ok, err = pcall(function()
+            loadstring(game:HttpGet(tostring(item.Data)))()
+        end)
+        if not ok then
+            Window:Notify({ Title = "Browse", Content = "Failed: " .. tostring(err), Icon = "alert-triangle", Duration = 4 })
+        end
+    end)
+end
+
 Window:CreateCategory("Library")
 local Browse = Window:CreateBrowseTab({
     Name = "Browse",
@@ -176,20 +190,48 @@ local Browse = Window:CreateBrowseTab({
     OnLoad = function(items)
         Window:Notify({ Title = "Browse", Content = #items .. " scripts loaded from API", Icon = "circle-check", Duration = 2 })
     end,
-    Callback = function(item)
-        -- item.Name, item.Category, item.Rating, item.Author, item.Data (= "url"), item.Raw (= original JSON)
-        if not item.Data then return end
-        Window:Notify({ Title = "Browse", Content = "Loading " .. item.Name .. "...", Icon = "download", Duration = 2 })
-        task.spawn(function()
-            local ok, err = pcall(function()
-                loadstring(game:HttpGet(tostring(item.Data)))()
-            end)
-            if not ok then
-                Window:Notify({ Title = "Browse", Content = "Failed: " .. tostring(err), Icon = "alert-triangle", Duration = 4 })
-            end
-        end)
+
+    -- Clicking a card opens a details dialog. `Details = true` gives the default one
+    -- (title, pictures, rating, info, "Select" button -> Callback). A function lets
+    -- you build it per item; anything you leave out falls back to the default.
+    Details = function(item, browse)
+        -- item.Name, item.Category, item.Rating, item.Author, item.Description, item.Images, item.Data, item.Raw
+        return {
+            HeaderButtons = { { Text = "Grid", Close = true } },
+            Tag = "Catalog #" .. tostring(item.Id),
+            Badge = string.format("★ %d%% · %s", item.Rating or 0, tostring(item.Author or "?")),
+            Lines = {
+                { Text = tostring(item.Category) .. " · by " .. tostring(item.Author or "unknown"), Icon = "tag" },
+                { Text = item.Description or "No description", Icon = "info" },
+                { Text = "Source: " .. tostring(item.Data), Icon = "ethernet-port", Color = "TextDim" },
+            },
+            Buttons = {
+                { Text = "Run Script", Icon = "play", Primary = true, Close = true, Callback = runScript },
+                {   -- two buttons in one row
+                    { Text = "Copy Link", Icon = "copy", Callback = function(item, dialog)
+                        if setclipboard then setclipboard(tostring(item.Data)) end
+                        dialog:GetButton(2):SetText("Copied!")
+                        task.delay(1.2, function() if dialog:IsOpen() then dialog:GetButton(2):SetText("Copy Link") end end)
+                    end },
+                    { Text = "Save to Files", Icon = "save", Callback = function(item)
+                        if not writefile then return end
+                        pcall(writefile, item.Name .. ".lua", game:HttpGet(tostring(item.Data)))
+                        Window:Notify({ Title = "Browse", Content = "Saved " .. item.Name .. ".lua", Icon = "save", Duration = 2 })
+                    end },
+                },
+                { Text = "More from " .. tostring(item.Author or "author"), Icon = "search", Accent = true, Close = true,
+                    Callback = function(item) browse:Search(tostring(item.Author or "")) end },
+            },
+        }
     end,
+
+    Callback = runScript, -- used when there is no Details (direct click) or by the default "Select" button
 })
+
+-- Dialogs can also be opened directly:
+-- Window:CreateDialog({ Title = "Hello", Lines = { "Line one", { Text = "Warning", Icon = "alert-triangle", Color = "Accent" } },
+--     Buttons = { { Text = "OK", Primary = true, Close = true }, { "Cancel", "Later" } } })
+-- Browse:ShowDetails(Browse:GetItems()[1])
 
 -- The same panel can also be driven from code:
 -- Browse:SetItems({ { Name = "Local script", Category = "Misc", Rating = 50, Data = "https://..." } })
