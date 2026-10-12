@@ -447,10 +447,28 @@ TopBar.BackgroundTransparency = 1
 TopBar.Active = true
 TopBar.Parent = Main
 
+-- Frames that float above the main window (Browse windows, dialogs). Input that
+-- lands on them must never start a drag of the main window underneath.
+local FLOATING_FRAMES = setmetatable({}, { __mode = "k" })
+local function inputOnFloatingFrame(input)
+    local x, y = input.Position.X, input.Position.Y
+    for frame in pairs(FLOATING_FRAMES) do
+        if frame.Parent and frame.Visible then
+            local p0 = frame.AbsolutePosition
+            local p1 = p0 + frame.AbsoluteSize
+            if x >= p0.X and x <= p1.X and y >= p0.Y and y <= p1.Y then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 do
     local dragging, dragStart, startPos
     TopBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if inputOnFloatingFrame(input) then return end
             dragging = true
             dragStart = input.Position
             startPos = Main.Position
@@ -2064,8 +2082,7 @@ local KEY_ALIASES = {
     end
 
     local POPUP_ANCHOR = setmetatable({}, { __mode = "k" })
-    local POPUP_ORIGIN = setmetatable({}, { __mode = "k" })
-    local POPUP_SCROLL_LIMIT = 10
+    local POPUP_META = setmetatable({}, { __mode = "k" }) -- {dx, gap}: popup offset from its anchor
 
     local function isPointInside(obj, point)
         local pos = obj.AbsolutePosition
@@ -2099,19 +2116,79 @@ local KEY_ALIASES = {
         closeAllPopups()
     end))
 
+    -- The window the anchor belongs to (main window, a Browse window, ...) = popup bounds
+    local function popupBounds(anchor)
+        local root = anchor
+        while root and root.Parent and root.Parent ~= ScreenGui do
+            root = root.Parent
+        end
+        if root and root ~= ScreenGui and root:IsA("GuiObject") then
+            return root.AbsolutePosition, root.AbsolutePosition + root.AbsoluteSize
+        end
+        return Vector2.new(0, 0), ScreenGui.AbsoluteSize
+    end
+
+    -- false when the anchor was scrolled out of its clipping container or hidden
+    local function anchorVisible(anchor)
+        if not anchor.Visible then return false end
+        local a0 = anchor.AbsolutePosition
+        local center = a0 + anchor.AbsoluteSize / 2
+        local p = anchor.Parent
+        while p and p ~= ScreenGui do
+            if p:IsA("GuiObject") then
+                if not p.Visible then return false end
+                if p.ClipsDescendants or p:IsA("ScrollingFrame") then
+                    local c0 = p.AbsolutePosition
+                    local c1 = c0 + p.AbsoluteSize
+                    if center.Y < c0.Y or center.Y > c1.Y or center.X < c0.X or center.X > c1.X then
+                        return false
+                    end
+                end
+            end
+            p = p.Parent
+        end
+        return true
+    end
+
+    local function placePopup(popup, anchor)
+        local meta = POPUP_META[popup]
+        if not meta then return end
+        local aPos, aSize = anchor.AbsolutePosition, anchor.AbsoluteSize
+        local pSize = popup.AbsoluteSize
+        local b0, b1 = popupBounds(anchor)
+        local screen = ScreenGui.AbsoluteSize
+
+        local x = aPos.X + meta.dx
+        x = math.clamp(x, math.min(b0.X, aPos.X), math.max(b0.X, b1.X - pSize.X))
+        x = math.clamp(x, 0, math.max(0, screen.X - pSize.X))
+
+        local below = aPos.Y + aSize.Y + meta.gap
+        local above = aPos.Y - meta.gap - pSize.Y
+        local y
+        if below + pSize.Y <= b1.Y then
+            y = below                     -- fits under the control inside the window
+        elseif above >= b0.Y then
+            y = above                     -- no room below -> open upwards
+        elseif below + pSize.Y <= screen.Y then
+            y = below                     -- window too small: at least stay on screen
+        else
+            y = math.max(0, above)
+        end
+        popup.Position = UDim2.fromOffset(x, y)
+    end
+
     trackConn(RunService.RenderStepped:Connect(function()
         if #activePopups == 0 then return end
         for _, p in ipairs(activePopups) do
             local anchor = POPUP_ANCHOR[p]
-            local origin = POPUP_ORIGIN[p]
-            if not anchor or not anchor.Parent or not origin then
+            if not anchor or not anchor.Parent then
                 closeAllPopups()
                 return
             end
-            local pos = anchor.AbsolutePosition
-            if math.abs(pos.X - origin.X) > POPUP_SCROLL_LIMIT or math.abs(pos.Y - origin.Y) > POPUP_SCROLL_LIMIT then
-                closeAllPopups()
-                return
+            if p.Parent then
+                local visible = anchorVisible(anchor)
+                p.Visible = visible
+                if visible then placePopup(p, anchor) end
             end
         end
     end))
@@ -2119,7 +2196,15 @@ local KEY_ALIASES = {
     local function trackPopup(popup, anchor)
         table.insert(activePopups, popup)
         POPUP_ANCHOR[popup] = anchor
-        POPUP_ORIGIN[popup] = anchor and anchor.AbsolutePosition or nil
+        if anchor then
+            POPUP_META[popup] = {
+                dx = popup.Position.X.Offset - anchor.AbsolutePosition.X,
+                gap = popup.Position.Y.Offset - (anchor.AbsolutePosition.Y + anchor.AbsoluteSize.Y),
+            }
+            task.defer(function()
+                if popup.Parent and anchor.Parent then placePopup(popup, anchor) end
+            end)
+        end
         popup.Destroying:Connect(function()
             for i, p in ipairs(activePopups) do
                 if p == popup then
@@ -4074,6 +4159,8 @@ local KEY_ALIASES = {
         box.Active = true -- sinks input: clicks/drags inside never reach the backdrop
         box.ZIndex = 150
         box.Parent = ScreenGui
+        FLOATING_FRAMES[box] = true
+        FLOATING_FRAMES[overlay] = true
         scalePopup(box)
         addCorner(box, 12)
         local boxStroke = addStroke(box, 1)
@@ -5642,6 +5729,7 @@ local KEY_ALIASES = {
         Win.Visible = false
         Win.ZIndex = 120
         Win.Parent = ScreenGui
+        FLOATING_FRAMES[Win] = true
         local winScale = Instance.new("UIScale")
         winScale.Scale = UI_SCALE
         winScale.Parent = Win
@@ -5805,10 +5893,11 @@ local KEY_ALIASES = {
             countPill.Visible = true
         end
 
-        do -- drag
+        do -- drag (ignored while a modal dialog is open above the window)
             local dragging, dragStart, startPos = false, nil, nil
             header.InputBegan:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    if activeDialog then return end
                     dragging = true
                     dragStart = input.Position
                     startPos = Win.Position
