@@ -165,8 +165,12 @@ local Catalog = Window:CreateBrowseWindow({   -- or CreateBrowseTab({ Mode = "Wi
 
 Section:CreateButton({ Name = "Open Catalog", Callback = function() Catalog:Open() end })
 Section:CreateToggle({ Name = "Catalog", Callback = function(v) Catalog:Toggle(v) end })
-Catalog:Close() / Catalog:IsOpen() / Catalog:SetTitle("...") / Catalog:SetCount(7960) / Catalog:SetPosition(UDim2) / Catalog:SetSize(w, h)
+Catalog:Close() / Catalog:IsOpen() / Catalog:SetTitle("...") / Catalog:SetCount(7960) / Catalog:SetPosition(UDim2) / Catalog:SetSize(w, h) / Catalog:GetSize()
 ```
+
+The window is resizable from the grip in its bottom-right corner (the grid
+re-flows to the new width). `MinWidth` / `MinHeight` (420 × 300 by default),
+`Resizable = false` and `OnResize(w, h)` control it.
 
 The handle has everything a tab-mode Browse has plus `Open / Close / Toggle /
 IsOpen`. The window hides together with the main UI (toggle key) and comes back

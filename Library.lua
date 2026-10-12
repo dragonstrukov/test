@@ -450,6 +450,18 @@ TopBar.Parent = Main
 -- Frames that float above the main window (Browse windows, dialogs). Input that
 -- lands on them must never start a drag of the main window underneath.
 local FLOATING_FRAMES = setmetatable({}, { __mode = "k" })
+local function pointOnFloatingFrame(x, y)
+    for frame in pairs(FLOATING_FRAMES) do
+        if frame.Parent and frame.Visible then
+            local p0 = frame.AbsolutePosition
+            local p1 = p0 + frame.AbsoluteSize
+            if x >= p0.X and x <= p1.X and y >= p0.Y and y <= p1.Y then
+                return true
+            end
+        end
+    end
+    return false
+end
 local function inputOnFloatingFrame(input)
     local x, y = input.Position.X, input.Position.Y
     for frame in pairs(FLOATING_FRAMES) do
@@ -3786,7 +3798,8 @@ local KEY_ALIASES = {
         local resizeStart
         local startSize
 
-        resizeHandle.MouseButton1Down:Connect(function()
+        resizeHandle.MouseButton1Down:Connect(function(x, y)
+            if pointOnFloatingFrame(x, y) then return end
             resizing = true
             resizeStart = UserInputService:GetMouseLocation()
 
@@ -5877,6 +5890,76 @@ local KEY_ALIASES = {
         content.ZIndex = 121
         content.Parent = Win
 
+        -- Resize grip (bottom-right corner); keeps the top-left corner in place
+        local minW = tonumber(opts.MinWidth) or 420
+        local minH = tonumber(opts.MinHeight) or 300
+        if opts.Resizable ~= false then
+            local grip = Instance.new("TextButton")
+            grip.Name = "ResizeHandle"
+            grip.Size = UDim2.new(0, 18, 0, 18)
+            grip.Position = UDim2.new(1, -18, 1, -18)
+            grip.BackgroundTransparency = 1
+            grip.Text = ""
+            grip.AutoButtonColor = false
+            grip.ZIndex = 130
+            grip.Parent = Win
+
+            local lines = {}
+            for i, spec in ipairs({{-4, -4, 14}, {-4, -8, 8}}) do
+                local line = Instance.new("Frame")
+                line.Size = UDim2.new(0, spec[3], 0, 1)
+                line.Position = UDim2.new(1, spec[1], 1, spec[2])
+                line.AnchorPoint = Vector2.new(1, 1)
+                bindColor(line, "BackgroundColor3", "TextDim")
+                line.BorderSizePixel = 0
+                line.ZIndex = 131
+                line.Parent = grip
+                addCorner(line, 4)
+                lines[i] = line
+            end
+            grip.MouseEnter:Connect(function()
+                for _, l in ipairs(lines) do bindColor(l, "BackgroundColor3", "Accent") end
+            end)
+            grip.MouseLeave:Connect(function()
+                for _, l in ipairs(lines) do bindColor(l, "BackgroundColor3", "TextDim") end
+            end)
+
+            local resizing, resizeStart, startSize, startPos = false, nil, nil, nil
+            grip.MouseButton1Down:Connect(function()
+                if activeDialog then return end
+                resizing = true
+                resizeStart = UserInputService:GetMouseLocation()
+                startSize = Vector2.new(Win.Size.X.Offset, Win.Size.Y.Offset)
+                startPos = Win.Position
+                closeAllPopups()
+            end)
+            trackConn(UserInputService.InputChanged:Connect(function(input)
+                if not resizing then return end
+                if input.UserInputType ~= Enum.UserInputType.MouseMovement
+                   and input.UserInputType ~= Enum.UserInputType.Touch then
+                    return
+                end
+                local scale = math.max(winScale.Scale, 0.01)
+                local delta = UserInputService:GetMouseLocation() - resizeStart
+                local newW = math.max(minW, startSize.X + delta.X / scale)
+                local newH = math.max(minH, startSize.Y + delta.Y / scale)
+                Win.Size = UDim2.new(0, newW, 0, newH)
+                -- AnchorPoint is the center: shift by half the growth so the top-left stays put
+                Win.Position = UDim2.new(
+                    startPos.X.Scale, startPos.X.Offset + (newW - startSize.X) * scale / 2,
+                    startPos.Y.Scale, startPos.Y.Offset + (newH - startSize.Y) * scale / 2)
+            end))
+            trackConn(UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1
+                   or input.UserInputType == Enum.UserInputType.Touch then
+                    if resizing and opts.OnResize then
+                        task.spawn(opts.OnResize, Win.Size.X.Offset, Win.Size.Y.Offset)
+                    end
+                    resizing = false
+                end
+            end))
+        end
+
         -- the panel uses ZIndex 3..8 internally; lift everything above the window chrome
         local host = {Parent = content, Window = Win, TabsParent = headerRight, Scale = winScale}
         local entry = {Frame = Win, Scale = winScale, HiddenWithUI = false}
@@ -5945,8 +6028,9 @@ local KEY_ALIASES = {
         function api.SetCount(n) host.SetCount(n) end
         function api.SetPosition(pos) Win.Position = pos end
         function api.SetSize(w, h)
-            Win.Size = UDim2.new(0, tonumber(w) or width, 0, tonumber(h) or height)
+            Win.Size = UDim2.new(0, math.max(minW, tonumber(w) or width), 0, math.max(minH, tonumber(h) or height))
         end
+        function api.GetSize() return Win.Size.X.Offset, Win.Size.Y.Offset end
         api.Frame = Win
         api.Host = host
         closeBtn.MouseButton1Click:Connect(api.Close)
@@ -6624,6 +6708,7 @@ local KEY_ALIASES = {
             function browse:SetCount(n) win.SetCount(n) end
             function browse:SetPosition(pos) win.SetPosition(pos) end
             function browse:SetSize(w, h) win.SetSize(w, h) end
+            function browse:GetSize() return win.GetSize() end
             browse.Show = browse.Open
             browse.Hide = browse.Close
             if bOpts.Visible == true or bOpts.Open == true then
