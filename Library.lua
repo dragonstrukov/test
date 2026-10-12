@@ -464,14 +464,10 @@ local function pointOnFloatingFrame(x, y)
 end
 local function inputOnFloatingFrame(input)
     local x, y = input.Position.X, input.Position.Y
-    for frame in pairs(FLOATING_FRAMES) do
-        if frame.Parent and frame.Visible then
-            local p0 = frame.AbsolutePosition
-            local p1 = p0 + frame.AbsoluteSize
-            if x >= p0.X and x <= p1.X and y >= p0.Y and y <= p1.Y then
-                return true
-            end
-        end
+    if pointOnFloatingFrame(x, y) then return true end
+    local ok, inset = pcall(function() return game:GetService("GuiService"):GetGuiInset() end)
+    if ok and inset then
+        return pointOnFloatingFrame(x, y - inset.Y) or pointOnFloatingFrame(x, y + inset.Y)
     end
     return false
 end
@@ -4129,6 +4125,26 @@ local KEY_ALIASES = {
     local DIALOG_BTN_H = 34
     local activeDialog = nil
 
+    -- Dialogs live in their own ScreenGui with IgnoreGuiInset = true, so the
+    -- backdrop really covers the whole screen (including the Roblox top bar).
+    local DialogGui = nil
+    local function getDialogGui()
+        if DialogGui and DialogGui.Parent then return DialogGui end
+        DialogGui = Instance.new("ScreenGui")
+        DialogGui.Name = "UILibraryDialogs"
+        DialogGui.ResetOnSpawn = false
+        DialogGui.IgnoreGuiInset = true
+        DialogGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        DialogGui.DisplayOrder = ScreenGui.DisplayOrder + 1
+        DialogGui.Parent = ScreenGui.Parent or ScreenGui
+        return DialogGui
+    end
+
+    local function guiInset()
+        local ok, topLeft = pcall(function() return game:GetService("GuiService"):GetGuiInset() end)
+        return (ok and topLeft) or Vector2.new(0, 0)
+    end
+
     local function closeActiveDialog()
         local d = activeDialog
         activeDialog = nil
@@ -4149,24 +4165,18 @@ local KEY_ALIASES = {
         local closed = false
         local handle = {}
 
+        local layer = getDialogGui()
         local overlay = Instance.new("TextButton")
         overlay.Name = "DialogOverlay"
-        do -- the ScreenGui starts below the Roblox top bar: stretch the backdrop over the inset too
-            local okInset, topLeft, bottomRight = pcall(function()
-                return game:GetService("GuiService"):GetGuiInset()
-            end)
-            local top = (okInset and topLeft and topLeft.Y or 36) + 4
-            local bottom = (okInset and bottomRight and bottomRight.Y or 0) + 4
-            overlay.Position = UDim2.new(0, -4, 0, -top)
-            overlay.Size = UDim2.new(1, 8, 1, top + bottom)
-        end
+        overlay.Position = UDim2.new(0, -8, 0, -8)
+        overlay.Size = UDim2.new(1, 16, 1, 16)
         overlay.BackgroundColor3 = Color3.new(0, 0, 0)
         overlay.BackgroundTransparency = 1
         overlay.BorderSizePixel = 0
         overlay.Text = ""
         overlay.AutoButtonColor = false
         overlay.ZIndex = 149
-        overlay.Parent = ScreenGui
+        overlay.Parent = layer
         TweenService:Create(overlay, TWEEN_FAST, {BackgroundTransparency = dOpts.Dim == false and 1 or 0.45}):Play()
 
         local box = Instance.new("Frame")
@@ -4178,7 +4188,7 @@ local KEY_ALIASES = {
         box.BorderSizePixel = 0
         box.Active = true -- sinks input: clicks/drags inside never reach the backdrop
         box.ZIndex = 150
-        box.Parent = ScreenGui
+        box.Parent = layer
         FLOATING_FRAMES[box] = true
         FLOATING_FRAMES[overlay] = true
         scalePopup(box)
@@ -4194,13 +4204,14 @@ local KEY_ALIASES = {
             end
             local center
             if anchor then
-                center = anchor.AbsolutePosition - ScreenGui.AbsolutePosition + anchor.AbsoluteSize / 2
+                -- anchor position relative to the main ScreenGui + that gui's offset on screen (the inset)
+                center = anchor.AbsolutePosition - ScreenGui.AbsolutePosition + guiInset() + anchor.AbsoluteSize / 2
                 -- match the scale of the window the dialog belongs to (Browse windows scale on their own)
                 local anchorScale = anchor:FindFirstChildOfClass("UIScale")
                 local boxScale = box:FindFirstChildOfClass("UIScale")
                 if anchorScale and boxScale then boxScale.Scale = anchorScale.Scale end
             else
-                center = ScreenGui.AbsoluteSize / 2
+                center = layer.AbsoluteSize / 2
             end
             box.Position = UDim2.fromOffset(center.X, center.Y + 16)
             TweenService:Create(box, TWEEN_SLOW, {Position = UDim2.fromOffset(center.X, center.Y)}):Play()
@@ -6299,6 +6310,7 @@ local KEY_ALIASES = {
         CONNECTIONS = {}
         closeAllPopups()
         writeCustomConfig()
+        if DialogGui then DialogGui:Destroy() end
         ScreenGui:Destroy()
     end
 
