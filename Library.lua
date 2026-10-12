@@ -4151,7 +4151,15 @@ local KEY_ALIASES = {
 
         local overlay = Instance.new("TextButton")
         overlay.Name = "DialogOverlay"
-        overlay.Size = UDim2.new(1, 0, 1, 0)
+        do -- the ScreenGui starts below the Roblox top bar: stretch the backdrop over the inset too
+            local okInset, topLeft, bottomRight = pcall(function()
+                return game:GetService("GuiService"):GetGuiInset()
+            end)
+            local top = (okInset and topLeft and topLeft.Y or 36) + 4
+            local bottom = (okInset and bottomRight and bottomRight.Y or 0) + 4
+            overlay.Position = UDim2.new(0, -4, 0, -top)
+            overlay.Size = UDim2.new(1, 8, 1, top + bottom)
+        end
         overlay.BackgroundColor3 = Color3.new(0, 0, 0)
         overlay.BackgroundTransparency = 1
         overlay.BorderSizePixel = 0
