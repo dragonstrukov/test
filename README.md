@@ -168,9 +168,12 @@ Section:CreateToggle({ Name = "Catalog", Callback = function(v) Catalog:Toggle(v
 Catalog:Close() / Catalog:IsOpen() / Catalog:SetTitle("...") / Catalog:SetCount(7960) / Catalog:SetPosition(UDim2) / Catalog:SetSize(w, h) / Catalog:GetSize()
 ```
 
-The window is resizable from the grip in its bottom-right corner (the grid
-re-flows to the new width). `MinWidth` / `MinHeight` (420 × 300 by default),
-`Resizable = false` and `OnResize(w, h)` control it.
+The window is resizable from the grip in its bottom-right corner, independently
+of the main window. `ResizeMode = "Scale"` (default) scales the content with the
+window like the main window does; `ResizeMode = "Size"` keeps the content size
+and gives the grid more room (more / wider cards). `MinWidth` / `MinHeight`
+(420 × 300 by default), `Resizable = false`, `OnResize(w, h)`,
+`Catalog:SetScale(1.2)` / `GetScale()` control it.
 
 The handle has everything a tab-mode Browse has plus `Open / Close / Toggle /
 IsOpen`. The window hides together with the main UI (toggle key) and comes back

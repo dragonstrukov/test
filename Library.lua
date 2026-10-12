@@ -3825,7 +3825,6 @@ local KEY_ALIASES = {
             mainScale.Scale = scale
             notifyScale.Scale = scale
             keybindScale.Scale = scale
-            for _, bw in ipairs(BROWSE_WINDOWS) do bw.Scale.Scale = scale end
             Main.Size = UDim2.new(0, newW / scale, 0, newH / scale)
         end))
 
@@ -4188,6 +4187,10 @@ local KEY_ALIASES = {
             local center
             if anchor then
                 center = anchor.AbsolutePosition - ScreenGui.AbsolutePosition + anchor.AbsoluteSize / 2
+                -- match the scale of the window the dialog belongs to (Browse windows scale on their own)
+                local anchorScale = anchor:FindFirstChildOfClass("UIScale")
+                local boxScale = box:FindFirstChildOfClass("UIScale")
+                if anchorScale and boxScale then boxScale.Scale = anchorScale.Scale end
             else
                 center = ScreenGui.AbsoluteSize / 2
             end
@@ -4715,6 +4718,12 @@ local KEY_ALIASES = {
             Total = nil,
         }
 
+        -- scale of the window this panel lives in (main window or its own Browse window)
+        local function panelScale()
+            local sc = host and host.Scale
+            return math.max((sc and sc.Scale) or UI_SCALE, 0.01)
+        end
+
         local Panel = Instance.new("Frame")
         Panel.Name = "BrowsePanel"
         Panel.Size = UDim2.new(1, 0, 1, 0)
@@ -4916,7 +4925,7 @@ local KEY_ALIASES = {
 
         local NAME_H = 26
         local function updateCellSize()
-            local width = Grid.AbsoluteSize.X / math.max(UI_SCALE, 0.01) - 6
+            local width = Grid.AbsoluteSize.X / panelScale() - 6
             if width <= 0 then return end
             local cellW = math.floor((width - gap * (columns - 1)) / columns)
             local cellH = math.floor(cellW * 0.55) + NAME_H
@@ -4924,7 +4933,7 @@ local KEY_ALIASES = {
         end
         Grid:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateCellSize)
         gridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-            Grid.CanvasSize = UDim2.new(0, 0, 0, gridLayout.AbsoluteContentSize.Y / math.max(UI_SCALE, 0.01) + 8)
+            Grid.CanvasSize = UDim2.new(0, 0, 0, gridLayout.AbsoluteContentSize.Y / panelScale() + 8)
         end)
         task.defer(updateCellSize)
 
@@ -5574,7 +5583,7 @@ local KEY_ALIASES = {
                 seg.Position = UDim2.new(1, -(rightW + 6), 0, 0)
                 seg.AnchorPoint = Vector2.new(1, 0)
                 seg:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-                    SearchFrame.Size = UDim2.new(1, -(rightW + 14 + seg.AbsoluteSize.X / math.max(UI_SCALE, 0.01)), 1, 0)
+                    SearchFrame.Size = UDim2.new(1, -(rightW + 14 + seg.AbsoluteSize.X / panelScale()), 1, 0)
                 end)
             end
             for i, t in ipairs(sourceTabs) do
@@ -5890,14 +5899,18 @@ local KEY_ALIASES = {
         content.ZIndex = 121
         content.Parent = Win
 
-        -- Resize grip (bottom-right corner); keeps the top-left corner in place
+        --[[ Resize grip (bottom-right corner). Independent from the main window:
+            ResizeMode = "Scale" (default, like the main window: the content scales
+            with the window) or "Size" (more room, content keeps its size). ]]
         local minW = tonumber(opts.MinWidth) or 420
         local minH = tonumber(opts.MinHeight) or 300
+        local scaleMode = string.lower(tostring(opts.ResizeMode or "scale")) ~= "size"
+        local SCALE_MIN, SCALE_MAX = 0.6, 2.0
         if opts.Resizable ~= false then
             local grip = Instance.new("TextButton")
             grip.Name = "ResizeHandle"
-            grip.Size = UDim2.new(0, 18, 0, 18)
-            grip.Position = UDim2.new(1, -18, 1, -18)
+            grip.Size = UDim2.new(0, 24, 0, 24)
+            grip.Position = UDim2.new(1, -24, 1, -24)
             grip.BackgroundTransparency = 1
             grip.Text = ""
             grip.AutoButtonColor = false
@@ -5924,12 +5937,13 @@ local KEY_ALIASES = {
                 for _, l in ipairs(lines) do bindColor(l, "BackgroundColor3", "TextDim") end
             end)
 
-            local resizing, resizeStart, startSize, startPos = false, nil, nil, nil
+            local resizing, resizeStart, startPixels, startPos = false, nil, nil, nil
             grip.MouseButton1Down:Connect(function()
                 if activeDialog then return end
                 resizing = true
                 resizeStart = UserInputService:GetMouseLocation()
-                startSize = Vector2.new(Win.Size.X.Offset, Win.Size.Y.Offset)
+                -- size on screen in pixels (Size * scale)
+                startPixels = Vector2.new(Win.Size.X.Offset * winScale.Scale, Win.Size.Y.Offset * winScale.Scale)
                 startPos = Win.Position
                 closeAllPopups()
             end)
@@ -5939,15 +5953,23 @@ local KEY_ALIASES = {
                    and input.UserInputType ~= Enum.UserInputType.Touch then
                     return
                 end
-                local scale = math.max(winScale.Scale, 0.01)
                 local delta = UserInputService:GetMouseLocation() - resizeStart
-                local newW = math.max(minW, startSize.X + delta.X / scale)
-                local newH = math.max(minH, startSize.Y + delta.Y / scale)
+                local pxW = math.max(minW * SCALE_MIN, startPixels.X + delta.X)
+                local pxH = math.max(minH * SCALE_MIN, startPixels.Y + delta.Y)
+                local scale
+                if scaleMode then
+                    scale = math.clamp(math.sqrt((pxW / width) * (pxH / height)), SCALE_MIN, SCALE_MAX)
+                else
+                    scale = winScale.Scale
+                end
+                local newW = math.max(minW, pxW / scale)
+                local newH = math.max(minH, pxH / scale)
+                winScale.Scale = scale
                 Win.Size = UDim2.new(0, newW, 0, newH)
-                -- AnchorPoint is the center: shift by half the growth so the top-left stays put
+                -- AnchorPoint is the center: shift by half the growth (in pixels) so the top-left stays put
                 Win.Position = UDim2.new(
-                    startPos.X.Scale, startPos.X.Offset + (newW - startSize.X) * scale / 2,
-                    startPos.Y.Scale, startPos.Y.Offset + (newH - startSize.Y) * scale / 2)
+                    startPos.X.Scale, startPos.X.Offset + (newW * scale - startPixels.X) / 2,
+                    startPos.Y.Scale, startPos.Y.Offset + (newH * scale - startPixels.Y) / 2)
             end))
             trackConn(UserInputService.InputEnded:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -6004,7 +6026,6 @@ local KEY_ALIASES = {
         function api.Open()
             if Win.Visible then return end
             entry.HiddenWithUI = false
-            winScale.Scale = UI_SCALE
             Win.Visible = true
             local target = Win.Position
             Win.Position = target + UDim2.fromOffset(0, 24)
@@ -6031,6 +6052,8 @@ local KEY_ALIASES = {
             Win.Size = UDim2.new(0, math.max(minW, tonumber(w) or width), 0, math.max(minH, tonumber(h) or height))
         end
         function api.GetSize() return Win.Size.X.Offset, Win.Size.Y.Offset end
+        function api.SetScale(scale) winScale.Scale = math.clamp(tonumber(scale) or 1, SCALE_MIN, SCALE_MAX) end
+        function api.GetScale() return winScale.Scale end
         api.Frame = Win
         api.Host = host
         closeBtn.MouseButton1Click:Connect(api.Close)
@@ -6709,6 +6732,8 @@ local KEY_ALIASES = {
             function browse:SetPosition(pos) win.SetPosition(pos) end
             function browse:SetSize(w, h) win.SetSize(w, h) end
             function browse:GetSize() return win.GetSize() end
+            function browse:SetScale(scale) win.SetScale(scale) end
+            function browse:GetScale() return win.GetScale() end
             browse.Show = browse.Open
             browse.Hide = browse.Close
             if bOpts.Visible == true or bOpts.Open == true then
