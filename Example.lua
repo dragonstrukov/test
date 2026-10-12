@@ -54,6 +54,43 @@ Fight:CreateDropdown({
     end,
 })
 
+-- Dropdown with 3D icons (ViewportFrame). Any Model / BasePart / Tool works:
+-- pass it per option as `Model`, or give a shared `Models` folder and the library
+-- looks the option text up inside it. Here simple parts are built on the fly so
+-- the demo works in any game.
+local function demoPart(shape, color, size)
+    local part = Instance.new("Part")
+    part.Shape = shape
+    part.Color = color
+    part.Material = Enum.Material.SmoothPlastic
+    part.Size = size
+    part.Anchored = true
+    return part
+end
+
+Fight:CreateDropdown({
+    Name = "Weapon",
+    Description = "3D icons: Icons3D = true, IconSize = 36",
+    Icons3D = true,          -- replaces the lucide icon with a ViewportFrame
+    IconSize = 36,           -- viewport side in px (rows grow to fit)
+    Icon3D = {               -- optional fine-tuning
+        Spin = true,         -- slowly rotate the model
+        Padding = 1.1,       -- air around the model (>1 = smaller model)
+        Angle = Vector3.new(20, -35, 0), -- pitch / yaw / roll the camera looks from
+    },
+    Options = {
+        { Text = "Sword", Model = demoPart(Enum.PartType.Block, Color3.fromRGB(232, 92, 82), Vector3.new(0.4, 3, 0.6)) },
+        { Text = "Orb",   Model = demoPart(Enum.PartType.Ball, Color3.fromRGB(84, 170, 255), Vector3.new(2, 2, 2)) },
+        { Text = "Barrel", Model = demoPart(Enum.PartType.Cylinder, Color3.fromRGB(110, 200, 120), Vector3.new(2, 1.4, 1.4)) },
+        { Text = "Fists", Icon = "hand" }, -- no model -> falls back to a lucide icon
+    },
+    Default = "Sword",
+    Flag = "Weapon",
+    Callback = function(text, index)
+        print("Weapon:", text, index)
+    end,
+})
+
 Fight:CreateMultiDropdown({
     Name = "Targets",
     Options = { "Players", "NPCs", "Bosses" },

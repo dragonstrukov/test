@@ -121,6 +121,47 @@ print(toggle:Get())
 Orion-style aliases are available: `AddToggle`, `AddButton`, `AddSlider`,
 `AddDropdown`, `AddTextbox`, `AddBind`, `AddColorPicker`, `AddLabel`, etc.
 
+### 3D icons in dropdowns
+
+`CreateDropdown` / `CreateMultiDropdown` can show a `ViewportFrame` instead of
+the lucide icon. Give an option a `Model` (any `Model`, `BasePart`, `Tool`,
+`Accessory`…; it is cloned, scripts stripped) and turn 3D icons on:
+
+```lua
+Section:CreateDropdown({
+    Name = "Weapon",
+    Icons3D = true,      -- or ["3DIcons"] = true; auto-enabled when options have Model / Models is set
+    IconSize = 36,       -- viewport side in px (default 32) — rows grow to fit
+    Icon3D = {           -- optional, all fields have defaults
+        Padding = 1.15,  -- >1 = more air around the model
+        Zoom = 1,        -- >1 = closer
+        FOV = 40,
+        Angle = Vector3.new(20, -35, 0), -- pitch, yaw, roll (deg) the camera looks from
+        Spin = false, SpinSpeed = 45,    -- rotate the model
+        Ambient = Color3.fromRGB(190, 190, 190),
+        LightColor = Color3.new(1, 1, 1),
+        LightDirection = Vector3.new(-1, -1.5, -1),
+        Background = nil,  -- Color3 or theme key ("BadgeBg") for a tile behind the model
+    },
+    Models = ReplicatedStorage.Weapons,  -- optional: look models up by option text
+    Options = {
+        { Text = "Sword", Model = ReplicatedStorage.Weapons.Sword },
+        { Text = "Bow" },                         -- found via Models by name
+        { Text = "Gun", Model = function() return player.Backpack:FindFirstChild("Gun") end },
+        { Text = "Fists", Icon = "hand" },        -- no model -> lucide icon fallback
+    },
+})
+```
+
+`Models` may be an Instance (searched recursively by name), a table
+`{Sword = model, ...}` or a `function(text)` returning an Instance. `Icons3D`
+may also be a number (= `IconSize`) or a table (= `Icon3D`). The handle exposes
+`.Icon` (slot of the closed control; `.Icon.Viewport` has `SetModel`,
+`SetAngle`, `SetZoom`) and `.Icon3D` (effective settings).
+
+`Window.CreateViewportIcon(parent, cfg, zIndex)` is exported for custom UI:
+returns `{Frame, Camera, World, SetModel(inst), SetAngle(v3), SetZoom(n), Destroy}`.
+
 ## Browse
 
 `Window:CreateBrowseTab` adds a full-width gallery: a search box, a sort switch

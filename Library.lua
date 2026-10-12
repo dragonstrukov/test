@@ -2597,7 +2597,8 @@ local KEY_ALIASES = {
     local CHEVRON_SIZE = 14
     local POPUP_VISIBLE_ROWS = 5
 
-    local function addPopupSearch(popup, rows, list)
+    local function addPopupSearch(popup, rows, list, rowH)
+        rowH = rowH or SELECT_OPTION_H
         local holder = Instance.new("Frame")
         holder.Name = "Search"
         holder.Size = UDim2.new(1, 0, 0, SELECT_OPTION_H)
@@ -2654,7 +2655,7 @@ local KEY_ALIASES = {
             end
             empty.Visible = shown == 0
             local rowsShown = math.max(1, math.min(shown, POPUP_VISIBLE_ROWS))
-            list.Size = UDim2.new(1, 0, 0, rowsShown * SELECT_OPTION_H + (rowsShown - 1) * 2)
+            list.Size = UDim2.new(1, 0, 0, rowsShown * rowH + (rowsShown - 1) * 2)
         end
 
         box:GetPropertyChangedSignal("Text"):Connect(function()
@@ -2670,17 +2671,257 @@ local KEY_ALIASES = {
 
     local function normalizeOption(opt)
         if type(opt) == "table" then
-            return opt.Text or "", opt.Icon
+            local icon, model = opt.Icon, opt.Model or opt.Icon3D or opt.Model3D or opt.Instance
+            if typeof(icon) == "Instance" then model, icon = icon, nil end
+            return opt.Text or "", icon, model
         end
-        return tostring(opt), nil
+        return tostring(opt), nil, nil
     end
 
-    local function addDropdown(card, name, description, options, defaultIndex, callback)
-        local row, top = createRow(card, name, description, {controlHeight = CONTROL_H})
+    ------------------------------------------------------------------
+    -- 3D icons (ViewportFrame) for dropdown options
+    ------------------------------------------------------------------
+    local ICON3D_DEFAULTS = {
+        Size = 32,             -- px (pre-scale) side of the viewport
+        Padding = 1.15,        -- >1 = more air around the model
+        Zoom = 1,              -- >1 = closer
+        FOV = 40,
+        Angle = Vector3.new(20, -35, 0), -- pitch, yaw, roll (deg) the camera looks from
+        Spin = false,          -- slowly rotate the model
+        SpinSpeed = 45,        -- deg / s
+        Ambient = Color3.fromRGB(190, 190, 190),
+        LightColor = Color3.fromRGB(255, 255, 255),
+        LightDirection = Vector3.new(-1, -1.5, -1),
+        Background = nil,      -- Color3 or theme key; nil = transparent
+        Models = nil,          -- Folder / table / function(text) used to look models up by option text
+    }
+
+    local function normalize3DConfig(cfg, extra)
+        local out = {}
+        for k, v in pairs(ICON3D_DEFAULTS) do out[k] = v end
+        if type(cfg) == "number" then
+            out.Size = cfg
+        elseif type(cfg) == "table" then
+            for k, v in pairs(cfg) do out[k] = v end
+        end
+        if extra then
+            if extra.IconSize then out.Size = extra.IconSize end
+            if extra.Models ~= nil then out.Models = extra.Models end
+        end
+        if type(out.Angle) == "number" then out.Angle = Vector3.new(20, out.Angle, 0) end
+        if typeof(out.Angle) ~= "Vector3" then out.Angle = ICON3D_DEFAULTS.Angle end
+        return out
+    end
+
+    -- turns the option's `Model` (or the shared `Models` source) into an Instance
+    local function resolveModel(value, text, cfg)
+        if type(value) == "function" then
+            local ok, res = pcall(value, text)
+            value = ok and res or nil
+        end
+        if typeof(value) == "Instance" then return value end
+        local src = cfg and cfg.Models
+        if src == nil then return nil end
+        local key = (type(value) == "string" and value) or text
+        if type(src) == "function" then
+            local ok, res = pcall(src, key, text)
+            if ok and typeof(res) == "Instance" then return res end
+        elseif typeof(src) == "Instance" then
+            local found = src:FindFirstChild(key, true)
+            if found then return found end
+        elseif type(src) == "table" then
+            local found = src[key]
+            if type(found) == "function" then
+                local ok, res = pcall(found, key)
+                found = ok and res or nil
+            end
+            if typeof(found) == "Instance" then return found end
+        end
+        return nil
+    end
+
+    local function createViewportIcon(parent, cfg, zIndex)
+        cfg = normalize3DConfig(cfg)
+        local vp = Instance.new("ViewportFrame")
+        vp.Name = "Icon3D"
+        vp.Size = UDim2.new(1, 0, 1, 0)
+        vp.BackgroundTransparency = cfg.Background and 0 or 1
+        if typeof(cfg.Background) == "Color3" then
+            vp.BackgroundColor3 = cfg.Background
+        elseif type(cfg.Background) == "string" then
+            bindColor(vp, "BackgroundColor3", cfg.Background)
+        end
+        vp.BorderSizePixel = 0
+        vp.Ambient = cfg.Ambient
+        vp.LightColor = cfg.LightColor
+        vp.LightDirection = cfg.LightDirection
+        vp.ImageTransparency = 0
+        if zIndex then vp.ZIndex = zIndex end
+        vp.Parent = parent
+        if cfg.Background then addCorner(vp, 4) end
+
+        local camera = Instance.new("Camera")
+        camera.FieldOfView = cfg.FOV
+        camera.Parent = vp
+        vp.CurrentCamera = camera
+
+        local world = Instance.new("WorldModel")
+        world.Parent = vp
+
+        local handle = {Frame = vp, Camera = camera, World = world}
+        local current, center, dist, yaw, spinConn = nil, Vector3.zero, 10, 0, nil
+
+        local function aim()
+            local pitch = math.rad(cfg.Angle.X)
+            local rot = CFrame.Angles(0, math.rad(cfg.Angle.Y) + yaw, 0) * CFrame.Angles(pitch, 0, 0)
+            local offset = rot:VectorToWorldSpace(Vector3.new(0, 0, dist))
+            camera.CFrame = CFrame.lookAt(center + offset, center)
+        end
+
+        local function stopSpin()
+            if spinConn then spinConn:Disconnect(); spinConn = nil end
+        end
+
+        function handle:SetModel(model)
+            if current then current:Destroy(); current = nil end
+            stopSpin()
+            if typeof(model) ~= "Instance" then return false end
+            local ok, clone = pcall(function() return model:Clone() end)
+            if not ok or not clone then return false end
+            local holder = Instance.new("Model")
+            holder.Name = "Holder"
+            clone.Parent = holder
+            for _, d in ipairs(holder:GetDescendants()) do
+                if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ModuleScript") then
+                    d:Destroy()
+                elseif d:IsA("BasePart") then
+                    d.Anchored = true
+                    d.CanCollide = false
+                end
+            end
+            holder.Parent = world
+            current = holder
+
+            local okBox, cf, size = pcall(function() return holder:GetBoundingBox() end)
+            if not okBox or not size or size.Magnitude == 0 then
+                center, dist = Vector3.zero, 10
+            else
+                center = cf.Position
+                local radius = math.max(size.Magnitude / 2, 0.05)
+                dist = (radius / math.sin(math.rad(cfg.FOV) / 2)) * cfg.Padding / math.max(cfg.Zoom, 0.05)
+            end
+            yaw = 0
+            aim()
+
+            if cfg.Spin then
+                spinConn = trackConn(RunService.RenderStepped:Connect(function(dt)
+                    if not vp.Parent then stopSpin() return end
+                    if not vp.Visible then return end
+                    yaw = yaw + math.rad(cfg.SpinSpeed) * dt
+                    aim()
+                end))
+            end
+            return true
+        end
+
+        function handle:SetAngle(v)
+            cfg.Angle = v
+            aim()
+        end
+
+        function handle:SetZoom(z)
+            local radius = dist * math.max(cfg.Zoom, 0.05) / cfg.Padding * math.sin(math.rad(cfg.FOV) / 2)
+            cfg.Zoom = z
+            dist = (radius / math.sin(math.rad(cfg.FOV) / 2)) * cfg.Padding / math.max(cfg.Zoom, 0.05)
+            aim()
+        end
+
+        function handle:Destroy()
+            stopSpin()
+            vp:Destroy()
+        end
+
+        vp.AncestryChanged:Connect(function()
+            if not vp.Parent then stopSpin() end
+        end)
+        return handle
+    end
+
+    -- A fixed-size "icon slot": shows either a lucide icon or (when 3D is on) a viewport
+    local function createIconSlot(parent, slotPx, cfg3, zIndex)
+        local slot = Instance.new("Frame")
+        slot.Name = "IconSlot"
+        slot.Size = UDim2.new(0, slotPx, 0, slotPx)
+        slot.Position = UDim2.new(0, 6, 0.5, -slotPx / 2)
+        slot.BackgroundTransparency = 1
+        if zIndex then slot.ZIndex = zIndex end
+        slot.Visible = false
+        slot.Parent = parent
+
+        local img = Instance.new("ImageLabel")
+        img.AnchorPoint = Vector2.new(0.5, 0.5)
+        img.Size = UDim2.new(0, ICON_SIZE, 0, ICON_SIZE)
+        img.Position = UDim2.new(0.5, 0, 0.5, 0)
+        img.BackgroundTransparency = 1
+        if zIndex then img.ZIndex = zIndex + 1 end
+        img.Visible = false
+        img.Parent = slot
+
+        local handle = {Frame = slot, Image = img, Has = false, IconName = nil, Viewport = nil}
+
+        function handle:Set(iconName, model, text)
+            local inst = cfg3 and resolveModel(model, text, cfg3) or nil
+            if inst then
+                if not self.Viewport then
+                    self.Viewport = createViewportIcon(slot, cfg3, zIndex and (zIndex + 1) or nil)
+                end
+                self.Viewport:SetModel(inst)
+                self.Viewport.Frame.Visible = true
+                img.Visible = false
+                self.Has = true
+            elseif iconName then
+                if self.Viewport then self.Viewport.Frame.Visible = false end
+                img.Image = resolveIcon(iconName)
+                img.Visible = true
+                self.IconName = iconName
+                self.Has = true
+            else
+                if self.Viewport then self.Viewport.Frame.Visible = false end
+                img.Visible = false
+                self.Has = false
+            end
+            slot.Visible = self.Has
+            return self.Has
+        end
+
+        function handle:Tint(spec)
+            if img.Visible then tintIcon(img, self.IconName, spec) end
+        end
+
+        return handle
+    end
+
+    -- shared per-dropdown geometry derived from the 3D-icon settings
+    local function dropdownIconLayout(extra)
+        local use3D = extra and extra.Icons3D
+        local cfg3 = use3D and normalize3DConfig(extra.Icon3D, extra) or nil
+        local slotPx = cfg3 and math.max(cfg3.Size, ICON_SIZE) or ICON_SIZE
+        return {
+            Cfg = cfg3,
+            Slot = slotPx,
+            ControlH = math.max(CONTROL_H, slotPx + 6),
+            OptionH = math.max(SELECT_OPTION_H, slotPx + 6),
+            TextX = slotPx + 12,
+        }
+    end
+
+    local function addDropdown(card, name, description, options, defaultIndex, callback, extra)
+        local L = dropdownIconLayout(extra)
+        local row, top = createRow(card, name, description, {controlHeight = L.ControlH})
 
         local select = Instance.new("TextButton")
         select.Name = "Select"
-        select.Size = UDim2.new(1, 0, 0, CONTROL_H)
+        select.Size = UDim2.new(1, 0, 0, L.ControlH)
         select.Position = UDim2.new(0, 0, 0, top)
         bindColor(select, "BackgroundColor3", "BadgeBg")
         select.Text = ""
@@ -2690,20 +2931,15 @@ local KEY_ALIASES = {
         addStroke(select)
 
         local currentIdx = defaultIndex or 1
-        local curText, curIconName = normalizeOption(options[currentIdx])
+        local curText, curIconName, curModel = normalizeOption(options[currentIdx])
 
-        local selectIcon = Instance.new("ImageLabel")
-        selectIcon.Size = UDim2.new(0, ICON_SIZE, 0, ICON_SIZE)
-        selectIcon.Position = UDim2.new(0, 6, 0.5, -8)
-        selectIcon.BackgroundTransparency = 1
-        selectIcon.Image = resolveIcon(curIconName)
-        tintIcon(selectIcon, curIconName, "TextMuted")
-        selectIcon.Visible = curIconName ~= nil
-        selectIcon.Parent = select
+        local selectIcon = createIconSlot(select, L.Slot, L.Cfg, nil)
+        selectIcon:Set(curIconName, curModel, curText)
+        selectIcon:Tint("TextMuted")
 
         local valueLbl = Instance.new("TextLabel")
         valueLbl.Size = UDim2.new(1, -52, 1, 0)
-        valueLbl.Position = UDim2.new(0, curIconName and 28 or 8, 0, 0)
+        valueLbl.Position = UDim2.new(0, selectIcon.Has and L.TextX or 8, 0, 0)
         valueLbl.BackgroundTransparency = 1
         valueLbl.Text = curText
         valueLbl.Font = Enum.Font.Gotham
@@ -2775,10 +3011,10 @@ local KEY_ALIASES = {
 
             local rows = {}
             for i, optData in ipairs(options) do
-                local optText, optIconName = normalizeOption(optData)
+                local optText, optIconName, optModel = normalizeOption(optData)
 
                 local ob = Instance.new("TextButton")
-                ob.Size = UDim2.new(1, 0, 0, SELECT_OPTION_H)
+                ob.Size = UDim2.new(1, 0, 0, L.OptionH)
                 bindColor(ob, "BackgroundColor3", "SidebarActive")
                 ob.BackgroundTransparency = 1
                 ob.Text = ""
@@ -2789,21 +3025,16 @@ local KEY_ALIASES = {
                 addCorner(ob, 4)
                 table.insert(rows, {Frame = ob, Text = optText})
 
-                local obIcon = nil
-                if optIconName then
-                    obIcon = Instance.new("ImageLabel")
-                    obIcon.Size = UDim2.new(0, ICON_SIZE, 0, ICON_SIZE)
-                    obIcon.Position = UDim2.new(0, 6, 0.5, -8)
-                    obIcon.BackgroundTransparency = 1
-                    obIcon.Image = resolveIcon(optIconName)
-                    tintIcon(obIcon, optIconName, function() return ((i == currentIdx)) and "Accent" or "TextMuted" end)
-                    obIcon.ZIndex = 102
-                    obIcon.Parent = ob
+                local obIcon = createIconSlot(ob, L.Slot, L.Cfg, 102)
+                if obIcon:Set(optIconName, optModel, optText) then
+                    obIcon:Tint(function() return ((i == currentIdx)) and "Accent" or "TextMuted" end)
+                else
+                    obIcon = nil
                 end
 
                 local obText = Instance.new("TextLabel")
                 obText.Size = UDim2.new(1, -36, 1, 0)
-                obText.Position = UDim2.new(0, optIconName and 28 or 8, 0, 0)
+                obText.Position = UDim2.new(0, obIcon and L.TextX or 8, 0, 0)
                 obText.BackgroundTransparency = 1
                 obText.Text = optText
                 obText.Font = Enum.Font.Gotham
@@ -2816,26 +3047,23 @@ local KEY_ALIASES = {
                 ob.MouseEnter:Connect(function()
                     ob.BackgroundTransparency = 0
                     bindColor(obText, "TextColor3", "Accent")
-                    if obIcon then tintIcon(obIcon, optIconName, "Accent") end
+                    if obIcon then obIcon:Tint("Accent") end
                 end)
                 ob.MouseLeave:Connect(function()
                     ob.BackgroundTransparency = 1
                     local c = (i == currentIdx) and THEME.Accent or THEME.TextPrimary
                     obText.TextColor3 = c
                     if obIcon then
-                        tintIcon(obIcon, optIconName, function() return ((i == currentIdx)) and "Accent" or "TextMuted" end)
+                        obIcon:Tint(function() return ((i == currentIdx)) and "Accent" or "TextMuted" end)
                     end
                 end)
                 ob.MouseButton1Click:Connect(function()
                     currentIdx = i
                     valueLbl.Text = optText
-                    if optIconName then
-                        selectIcon.Image = resolveIcon(optIconName)
-                        tintIcon(selectIcon, optIconName, "TextMuted")
-                        selectIcon.Visible = true
-                        valueLbl.Position = UDim2.new(0, 28, 0, 0)
+                    if selectIcon:Set(optIconName, optModel, optText) then
+                        selectIcon:Tint("TextMuted")
+                        valueLbl.Position = UDim2.new(0, L.TextX, 0, 0)
                     else
-                        selectIcon.Visible = false
                         valueLbl.Position = UDim2.new(0, 8, 0, 0)
                     end
                     popup:Destroy()
@@ -2844,7 +3072,7 @@ local KEY_ALIASES = {
                 end)
             end
 
-            addPopupSearch(popup, rows, list)
+            addPopupSearch(popup, rows, list, L.OptionH)
             trackPopup(popup, select)
             currentPopup = popup
         end)
@@ -2852,15 +3080,12 @@ local KEY_ALIASES = {
         local function applySelection(idx, fire)
             if not idx or not options[idx] then return end
             currentIdx = idx
-            local optText, optIconName = normalizeOption(options[idx])
+            local optText, optIconName, optModel = normalizeOption(options[idx])
             valueLbl.Text = optText
-            if optIconName then
-                selectIcon.Image = resolveIcon(optIconName)
-                tintIcon(selectIcon, optIconName, "TextMuted")
-                selectIcon.Visible = true
-                valueLbl.Position = UDim2.new(0, 28, 0, 0)
+            if selectIcon:Set(optIconName, optModel, optText) then
+                selectIcon:Tint("TextMuted")
+                valueLbl.Position = UDim2.new(0, L.TextX, 0, 0)
             else
-                selectIcon.Visible = false
                 valueLbl.Position = UDim2.new(0, 8, 0, 0)
             end
             if currentPopup and currentPopup.Parent then
@@ -2894,6 +3119,9 @@ local KEY_ALIASES = {
             local text = normalizeOption(options[currentIdx])
             return text, currentIdx
         end
+
+        dropdownApi.Icon = selectIcon          -- icon slot of the closed control (.Viewport when 3D)
+        dropdownApi.Icon3D = L.Cfg             -- effective 3D settings (nil when disabled)
 
         setmetatable(dropdownApi, {__call = function(_, text, idx)
             if idx then
@@ -3205,8 +3433,9 @@ local KEY_ALIASES = {
         })
     end
 
-    local function addMultiDropdown(card, name, description, options, defaults, callback)
-        local row, top = createRow(card, name, description, {controlHeight = CONTROL_H})
+    local function addMultiDropdown(card, name, description, options, defaults, callback, extra)
+        local L = dropdownIconLayout(extra)
+        local row, top = createRow(card, name, description, {controlHeight = L.ControlH})
 
         local states = {}
         for i, opt in ipairs(options) do
@@ -3226,7 +3455,7 @@ local KEY_ALIASES = {
 
         local select = Instance.new("TextButton")
         select.Name = "Select"
-        select.Size = UDim2.new(1, 0, 0, CONTROL_H)
+        select.Size = UDim2.new(1, 0, 0, L.ControlH)
         select.Position = UDim2.new(0, 0, 0, top)
         bindColor(select, "BackgroundColor3", "BadgeBg")
         select.Text = ""
@@ -3309,10 +3538,10 @@ local KEY_ALIASES = {
 
             local rows = {}
             for i, optData in ipairs(options) do
-                local optText, optIconName = normalizeOption(optData)
+                local optText, optIconName, optModel = normalizeOption(optData)
 
                 local ob = Instance.new("TextButton")
-                ob.Size = UDim2.new(1, 0, 0, SELECT_OPTION_H)
+                ob.Size = UDim2.new(1, 0, 0, L.OptionH)
                 bindColor(ob, "BackgroundColor3", "SidebarActive")
                 ob.BackgroundTransparency = 1
                 ob.Text = ""
@@ -3323,21 +3552,16 @@ local KEY_ALIASES = {
                 addCorner(ob, 4)
                 table.insert(rows, {Frame = ob, Text = optText})
 
-                local obIcon = nil
-                if optIconName then
-                    obIcon = Instance.new("ImageLabel")
-                    obIcon.Size = UDim2.new(0, ICON_SIZE, 0, ICON_SIZE)
-                    obIcon.Position = UDim2.new(0, 6, 0.5, -8)
-                    obIcon.BackgroundTransparency = 1
-                    obIcon.Image = resolveIcon(optIconName)
-                    tintIcon(obIcon, optIconName, function() return (states[i]) and "Accent" or "TextMuted" end)
-                    obIcon.ZIndex = 102
-                    obIcon.Parent = ob
+                local obIcon = createIconSlot(ob, L.Slot, L.Cfg, 102)
+                if obIcon:Set(optIconName, optModel, optText) then
+                    obIcon:Tint(function() return (states[i]) and "Accent" or "TextMuted" end)
+                else
+                    obIcon = nil
                 end
 
                 local obText = Instance.new("TextLabel")
                 obText.Size = UDim2.new(1, -36, 1, 0)
-                obText.Position = UDim2.new(0, optIconName and 28 or 8, 0, 0)
+                obText.Position = UDim2.new(0, obIcon and L.TextX or 8, 0, 0)
                 obText.BackgroundTransparency = 1
                 obText.Text = optText
                 obText.Font = Enum.Font.Gotham
@@ -3357,14 +3581,14 @@ local KEY_ALIASES = {
                     states[i] = not states[i]
                     bindColor(obText, "TextColor3", function() return (states[i]) and "Accent" or "TextPrimary" end)
                     if obIcon then
-                        tintIcon(obIcon, optIconName, function() return (states[i]) and "Accent" or "TextMuted" end)
+                        obIcon:Tint(function() return (states[i]) and "Accent" or "TextMuted" end)
                     end
                     valueLbl.Text = buildSummary()
                     if callback then callback(options, states) end
                 end)
             end
 
-            addPopupSearch(popup, rows, list)
+            addPopupSearch(popup, rows, list, L.OptionH)
             trackPopup(popup, select)
             currentPopup = popup
         end)
@@ -6492,6 +6716,37 @@ local KEY_ALIASES = {
                     return o.Description or o.Desc
                 end
 
+                -- 3D icon options shared by CreateDropdown / CreateMultiDropdown
+                local function iconExtra(o, list)
+                    local flag = o.Icons3D
+                    if flag == nil then flag = o["3DIcons"] end
+                    if flag == nil then flag = o.ViewportIcons end
+                    if flag == nil then
+                        -- auto-enable when a model source or any option carries a model
+                        if o.Models ~= nil then
+                            flag = true
+                        else
+                            for _, v in ipairs(list) do
+                                if type(v) == "table" and (v.Model ~= nil or v.Icon3D ~= nil
+                                    or v.Model3D ~= nil or v.Instance ~= nil or typeof(v.Icon) == "Instance") then
+                                    flag = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    if not flag then return nil end
+                    local cfg = o.Icon3D or o.Viewport or o.IconConfig
+                    if type(flag) == "table" then cfg = flag end
+                    if type(flag) == "number" then cfg = {Size = flag} end
+                    return {
+                        Icons3D = true,
+                        Icon3D = cfg,
+                        IconSize = o.IconSize or o.Icon3DSize or o.ViewportSize,
+                        Models = o.Models,
+                    }
+                end
+
                 function Section:CreateToggle(tOpts)
                     tOpts = tOpts or {}
                     local default = tOpts.Default
@@ -6574,7 +6829,8 @@ local KEY_ALIASES = {
                         Library.Flags[dOpts.Flag] = list[defIdx] and optText(list[defIdx]) or ""
                     end
                     return addDropdown(body, dOpts.Name or dOpts.Title or "Dropdown",
-                        descOf(dOpts), list, defIdx, flagCallback(dOpts.Flag, dOpts.Callback))
+                        descOf(dOpts), list, defIdx, flagCallback(dOpts.Flag, dOpts.Callback),
+                        iconExtra(dOpts, list))
                 end
 
                 function Section:CreateMultiDropdown(mOpts)
@@ -6614,7 +6870,8 @@ local KEY_ALIASES = {
                     end
                     return addMultiDropdown(body, mOpts.Name or mOpts.Title or "Multi",
                         descOf(mOpts), list, defaultsMap,
-                        flagCallback(mOpts.Flag, mOpts.Callback, transform))
+                        flagCallback(mOpts.Flag, mOpts.Callback, transform),
+                        iconExtra(mOpts, list))
                 end
 
                 function Section:CreateInput(iOpts)
@@ -6880,6 +7137,8 @@ local KEY_ALIASES = {
         Window.TweenColors = tweenColors
         Window.RefreshTheme = refreshTheme
         Window.ResolveIcon = resolveIcon
+        Window.CreateViewportIcon = createViewportIcon -- (parent, cfg, zIndex) -> {Frame, SetModel, SetAngle, SetZoom, Destroy}
+        Window.Icon3DDefaults = ICON3D_DEFAULTS
         Window.TintIcon = tintIcon
         Window.Icons = LUCIDE
         Window.LogoAsset = LOGO_ASSET
