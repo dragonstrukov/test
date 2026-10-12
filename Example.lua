@@ -168,8 +168,7 @@ local Browse = Window:CreateBrowseTab({
     Name = "Browse",
     Icon = "store",
     -- JSON API with the list of scripts (see browse.json). Remove it to use only Items.
-    -- After merging to main: "https://raw.githubusercontent.com/dragonstrukov/test/main/browse.json"
-    Source = "https://raw.githubusercontent.com/dragonstrukov/test/arena/a5c5a8e6-test/browse.json",
+    Source = "https://raw.githubusercontent.com/dragonstrukov/test/main/browse.json",
 
     -- Optional: shown right away and kept if the API is unreachable (offline / 404).
     Items = {
