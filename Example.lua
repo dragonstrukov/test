@@ -149,19 +149,6 @@ Speed:CreateSlider({
 -- is the same for every user and can be updated without touching the script.
 -- JSON format: {"items": [{"name", "category", "rating", "author", "image", "url"}, ...]}
 -- (see browse.json in the repo).
-local BROWSE_API = "https://raw.githubusercontent.com/dragonstrukov/test/arena/a5c5a8e6-test/browse.json"
--- after merging to main: "https://raw.githubusercontent.com/dragonstrukov/test/main/browse.json"
-
--- Shown right away and kept if the API is unreachable (offline / 404).
-local BROWSE_FALLBACK = {
-    { Name = "Example Hub",   Category = "Universal", Rating = 96, Author = "dragonstrukov", Image = "rbxassetid://81973586053257",  Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
-    { Name = "Attack Aura",   Category = "Combat",    Rating = 88, Author = "dragonstrukov", Image = "rbxassetid://130551565616516", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
-    { Name = "Walk Speed",    Category = "Movement",  Rating = 79, Author = "dragonstrukov", Image = "rbxassetid://110273524101447", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
-    { Name = "Player ESP",    Category = "Visuals",   Rating = 91, Author = "dragonstrukov", Image = "rbxassetid://100033680381365", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
-    { Name = "Anti AFK",      Category = "Misc",      Rating = 99, Author = "dragonstrukov", Image = "rbxassetid://98083086936965",  Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
-    { Name = "Noclip",        Category = "Movement",  Rating = 77, Author = "dragonstrukov", Image = "rbxassetid://113822048130017", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
-}
-
 -- Runs a script from the feed (item.Data = "url" field of the JSON)
 local function runScript(item)
     if not item.Data then return end
@@ -180,8 +167,19 @@ Window:CreateCategory("Library")
 local Browse = Window:CreateBrowseTab({
     Name = "Browse",
     Icon = "store",
-    Source = BROWSE_API,          -- JSON API; remove it to use only Items
-    Items = BROWSE_FALLBACK,      -- optional: shown until the API answers
+    -- JSON API with the list of scripts (see browse.json). Remove it to use only Items.
+    -- After merging to main: "https://raw.githubusercontent.com/dragonstrukov/test/main/browse.json"
+    Source = "https://raw.githubusercontent.com/dragonstrukov/test/arena/a5c5a8e6-test/browse.json",
+
+    -- Optional: shown right away and kept if the API is unreachable (offline / 404).
+    Items = {
+        { Name = "Example Hub", Category = "Universal", Rating = 96, Author = "dragonstrukov", Image = "rbxassetid://81973586053257",  Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+        { Name = "Attack Aura", Category = "Combat",    Rating = 88, Author = "dragonstrukov", Image = "rbxassetid://130551565616516", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+        { Name = "Walk Speed",  Category = "Movement",  Rating = 79, Author = "dragonstrukov", Image = "rbxassetid://110273524101447", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+        { Name = "Player ESP",  Category = "Visuals",   Rating = 91, Author = "dragonstrukov", Image = "rbxassetid://100033680381365", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+        { Name = "Anti AFK",    Category = "Misc",      Rating = 99, Author = "dragonstrukov", Image = "rbxassetid://98083086936965",  Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+        { Name = "Noclip",      Category = "Movement",  Rating = 77, Author = "dragonstrukov", Image = "rbxassetid://113822048130017", Fit = true, Data = "https://raw.githubusercontent.com/dragonstrukov/test/main/Example.lua" },
+    },
     Categories = { "Universal", "Combat", "Movement", "Visuals", "Misc" }, -- omit to build them from the items
     SortModes = { "Hot", "New", "A-Z" },
     PageSize = 9,
