@@ -41,6 +41,8 @@ local Window = Library:CreateWindow({
     ToggleKey = Enum.KeyCode.RightShift, -- hide/show hotkey
     LogoBase64 = "...",            -- your own PNG in base64 for the icon (optional)
     KeybindList = true,            -- keybind overlay: true / false / options table
+    ThreeDIcons = true,            -- allow Model/BasePart icons in ViewportFrames (false by default)
+    -- Or use the exact key: ["3DIcons"] = true
 })
 ```
 
@@ -103,11 +105,11 @@ print(toggle:Get())
 | Control | Options | Callback |
 |---|---|---|
 | `CreateToggle` | `Default` (bool) | `function(value)` |
-| `CreateButtonRow(name, {{Text, Callback}, ...})` | 1–2 buttons in a row, returns an array of `{Button, Fire, SetText}` handles | — |
-| `CreateButton({Name, Callback})` | Single button, returns `{Button, Fire, SetText}` | — |
+| `CreateButtonRow(name, {{Text, Icon, Callback}, ...})` | 1–2 buttons in a row, returns an array of `{Button, Icon, Fire, SetText}` handles | — |
+| `CreateButton({Name, Icon, Callback})` | Single button; `Icon` may be a Lucide name, asset id, or (with 3D icons enabled) a `Model`/`BasePart` | — |
 | `CreateSlider` | `Min`, `Max`, `Default`, `Decimals` | `function(value)` |
-| `CreateDropdown` | `Options` (array of strings or `{Text, Icon}`), `Default` (text or index) | `function(text, index)` |
-| `CreateMultiDropdown` | `Options`, `Default` (`{"A"}` or `{A = true}`) | `function(picked)` — array of selected |
+| `CreateDropdown` | `Options` (strings or `{Text, Icon}`); `Icon` may be a `Model`/`BasePart` when 3D icons are enabled. `Default` is text or index | `function(text, index)` |
+| `CreateMultiDropdown` | `Options`, `Default` (`{"A"}` or `{A = true}`); option icons also support `Model`/`BasePart` when enabled | `function(picked)` — array of selected |
 | `CreateInput` | `Placeholder`, `Default` | `function(text)` — on typing |
 | `CreateKeybind` | `Default` (e.g. `"G"`, `"None"`), `Overlay` (bool), `OverlayName` | `function(key)` |
 | `CreateColorPicker` | `Default` (Color3) | `function(color)` |
@@ -117,6 +119,50 @@ print(toggle:Get())
 
 Orion-style aliases are available: `AddToggle`, `AddButton`, `AddSlider`,
 `AddDropdown`, `AddTextbox`, `AddBind`, `AddColorPicker`, `AddLabel`, etc.
+
+### 3D icons
+
+3D icons are rendered in a `ViewportFrame`. Enable them on the window with
+`ThreeDIcons = true` (off by default), then pass a `Model` or `BasePart` as
+`Icon`. The source instance is cloned for display and is not moved or modified.
+A regular string icon continues to use the existing 2D Lucide/asset icon renderer.
+
+```lua
+local iconModel = game:GetService("ReplicatedStorage"):WaitForChild("SwordIcon")
+local Window = Library:CreateWindow({
+    Name = "My Hub",
+    ThreeDIcons = true,
+    -- Same setting with the literal API spelling: ["3DIcons"] = true,
+})
+
+Section:CreateButton({
+    Name = "Equip sword",
+    Icon = iconModel, -- or Icon3D = iconModel
+    Callback = function() print("Equipped") end,
+})
+
+Section:CreateButtonRow("Actions", {
+    { Text = "Preview", Icon = iconModel, Callback = function() end },
+    { Text = "Reset", Icon = "refresh-cw", Callback = function() end },
+})
+
+Section:CreateDropdown({
+    Name = "Weapon",
+    Options = {
+        { Text = "Sword", Icon = iconModel },
+        { Text = "Default", Icon = "box" },
+    },
+})
+```
+
+You can also set `Icon3D = model` alongside a normal `Icon = "lucide-name"`
+for a 2D fallback, and tune the preview with
+`IconOptions = { Rotation = Vector3.new(0, 25, 0), FieldOfView = 36 }`.
+`ThreeDIcons = false` (or `["3DIcons"] = false`) disables ViewportFrame
+rendering. Since Lua keys cannot start with a digit, use `ThreeDIcons` or the
+bracket form for the literal `3DIcons` spelling. A control or individual
+button/dropdown option can override the window setting with its own
+`ThreeDIcons` / `["3DIcons"]` boolean.
 
 ## Keybind list
 

@@ -8,7 +8,16 @@ local Window = Library:CreateWindow({
     Version = "v1.0",
     FooterText = "made with UI Library",
     ToggleKey = Enum.KeyCode.RightShift,
+    ThreeDIcons = true, -- Or use ["3DIcons"] = true
 })
+
+-- A standalone sample Part: the library clones it into a ViewportFrame icon.
+local ThreeDIconModel = Instance.new("Part")
+ThreeDIconModel.Name = "Example3DIcon"
+ThreeDIconModel.Shape = Enum.PartType.Ball
+ThreeDIconModel.Size = Vector3.new(1.4, 1.4, 1.4)
+ThreeDIconModel.Material = Enum.Material.Neon
+ThreeDIconModel.Color = Color3.fromRGB(246, 92, 82)
 
 local Keybinds = Window:CreateKeybindList({
     Title = "Keybinds",
@@ -46,7 +55,11 @@ Fight:CreateSlider({
 
 Fight:CreateDropdown({
     Name = "Mode",
-    Options = { "Legit", "Rage", "Silent" },
+    Options = {
+        { Text = "Legit", Icon = ThreeDIconModel },
+        { Text = "Rage", Icon = "zap" },
+        { Text = "Silent", Icon3D = ThreeDIconModel, IconOptions = { Rotation = Vector3.new(0, 30, 0) } },
+    },
     Default = "Legit",
     Flag = "AuraMode",
     Callback = function(text, index)
@@ -106,12 +119,13 @@ Target:CreateProgressBar({
 })
 
 Fight:CreateButtonRow("Actions", {
-    { Text = "Start", Callback = function() print("Start!") end },
-    { Text = "Stop", Callback = function() print("Stop!") end },
+    { Text = "Start", Icon = ThreeDIconModel, Callback = function() print("Start!") end },
+    { Text = "Stop", Icon = "pause", Callback = function() print("Stop!") end },
 })
 
 MoveTab:CreateSection("Speed", 1):CreateButton({
     Name = "Reset Speed",
+    Icon = ThreeDIconModel,
     Callback = function() print("Speed reset") end,
 })
 

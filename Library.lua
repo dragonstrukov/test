@@ -1,5 +1,5 @@
 local Library = {}
-Library.Version = "1.1.0"
+Library.Version = "1.2.0"
 Library.Flags = {}
 
 local TweenService = game:GetService("TweenService")
@@ -11,6 +11,12 @@ local Players = game:GetService("Players")
 
 function Library:CreateWindow(options)
     options = options or {}
+
+local THREE_D_ICONS_ENABLED = options.ThreeDIcons
+if THREE_D_ICONS_ENABLED == nil then
+    THREE_D_ICONS_ENABLED = options["3DIcons"]
+end
+THREE_D_ICONS_ENABLED = THREE_D_ICONS_ENABLED == true
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -2512,6 +2518,59 @@ local KEY_ALIASES = {
         return box
     end
 
+    local function getThreeDIconsEnabled(config, fallback)
+        if type(config) == "table" then
+            if config.ThreeDIcons ~= nil then
+                return config.ThreeDIcons == true
+            end
+            if config["3DIcons"] ~= nil then
+                return config["3DIcons"] == true
+            end
+        end
+        if fallback ~= nil then
+            return fallback == true
+        end
+        return THREE_D_ICONS_ENABLED
+    end
+
+    local function isViewportModel(value)
+        if typeof(value) ~= "Instance" then
+            return false
+        end
+        return value:IsA("Model") or value:IsA("BasePart")
+    end
+
+    local function readIconSpec(definition)
+        if type(definition) ~= "table" then
+            if isViewportModel(definition) then
+                return nil, definition, nil
+            end
+            return nil, nil, nil
+        end
+
+        local icon = definition.Icon
+        local model = definition.Icon3D or definition["3DIcon"]
+            or definition.Model3D or definition.Model
+        local iconOptions = definition.IconOptions or definition.ViewportOptions
+            or definition["3DIconOptions"]
+
+        if type(icon) == "table" and typeof(icon) ~= "Instance" then
+            local iconSpec = icon
+            model = model or iconSpec.Icon3D or iconSpec["3DIcon"]
+                or iconSpec.Model3D or iconSpec.Model or iconSpec.Instance or iconSpec.Object
+            icon = iconSpec.FallbackIcon or iconSpec.Image or iconSpec.Icon
+            iconOptions = iconOptions or iconSpec.IconOptions or iconSpec.ViewportOptions or iconSpec
+        elseif isViewportModel(icon) then
+            model = model or icon
+            icon = definition.FallbackIcon or definition.IconFallback
+        end
+
+        if icon == nil then
+            icon = definition.FallbackIcon or definition.IconFallback
+        end
+        return icon, model, iconOptions
+    end
+
     local function normalizeOption(opt)
         if type(opt) == "table" then
             return opt.Text or "", opt.Icon
@@ -2519,7 +2578,154 @@ local KEY_ALIASES = {
         return tostring(opt), nil
     end
 
-    local function addDropdown(card, name, description, options, defaultIndex, callback)
+    local function makeViewportIcon(parent, modelSource, iconOptions, position, size, zIndex)
+        if not isViewportModel(modelSource) then
+            return nil
+        end
+
+        local okClone, clone = pcall(function()
+            return modelSource:Clone()
+        end)
+        if not okClone or not clone then
+            return nil
+        end
+
+        for _, descendant in ipairs(clone:GetDescendants()) do
+            if descendant:IsA("Script") or descendant:IsA("LocalScript") then
+                descendant:Destroy()
+            elseif descendant:IsA("BasePart") then
+                descendant.Anchored = true
+                descendant.CanCollide = false
+                descendant.CanTouch = false
+                descendant.CanQuery = false
+                descendant.LocalTransparencyModifier = 0
+            end
+        end
+        if clone:IsA("BasePart") then
+            clone.Anchored = true
+            clone.CanCollide = false
+            clone.CanTouch = false
+            clone.CanQuery = false
+            clone.LocalTransparencyModifier = 0
+        end
+
+        local boundsCFrame, boundsSize
+        local okBounds = pcall(function()
+            if clone:IsA("Model") then
+                boundsCFrame, boundsSize = clone:GetBoundingBox()
+            else
+                boundsCFrame, boundsSize = clone.CFrame, clone.Size
+            end
+        end)
+        if not okBounds or not boundsCFrame or not boundsSize then
+            clone:Destroy()
+            return nil
+        end
+
+        local center = boundsCFrame.Position
+        local okPosition = pcall(function()
+            if clone:IsA("Model") then
+                clone:PivotTo(CFrame.new(-center) * clone:GetPivot())
+            else
+                clone.CFrame = CFrame.new(-center) * clone.CFrame
+            end
+
+            local rotation = type(iconOptions) == "table" and iconOptions.Rotation or nil
+            if typeof(rotation) == "Vector3" then
+                local rotationCFrame = CFrame.Angles(
+                    math.rad(rotation.X), math.rad(rotation.Y), math.rad(rotation.Z)
+                )
+                if clone:IsA("Model") then
+                    clone:PivotTo(rotationCFrame * clone:GetPivot())
+                else
+                    clone.CFrame = rotationCFrame * clone.CFrame
+                end
+            end
+        end)
+        if not okPosition then
+            clone:Destroy()
+            return nil
+        end
+
+        local viewport = Instance.new("ViewportFrame")
+        viewport.Name = "IconViewport"
+        viewport.Size = size
+        viewport.Position = position
+        viewport.BackgroundTransparency = 1
+        viewport.BorderSizePixel = 0
+        viewport.ClipsDescendants = true
+        viewport.ZIndex = zIndex or 1
+        viewport.Ambient = Color3.fromRGB(205, 205, 205)
+        viewport.LightColor = Color3.fromRGB(255, 255, 255)
+        viewport.LightDirection = Vector3.new(-1, -1, -1)
+        viewport.Parent = parent
+
+        local world = Instance.new("WorldModel")
+        world.Name = "IconWorld"
+        world.Parent = viewport
+        clone.Parent = world
+
+        local camera = Instance.new("Camera")
+        camera.Name = "IconCamera"
+        camera.FieldOfView = 36
+        camera.Parent = viewport
+        viewport.CurrentCamera = camera
+
+        local fieldOfView = camera.FieldOfView
+        if type(iconOptions) == "table" then
+            local requestedFov = tonumber(iconOptions.FieldOfView or iconOptions.FOV)
+            if requestedFov then
+                fieldOfView = math.clamp(requestedFov, 1, 120)
+                camera.FieldOfView = fieldOfView
+            end
+        end
+
+        local extent = math.max(boundsSize.Magnitude, 0.1)
+        local distance = (extent * 0.5) / math.tan(math.rad(fieldOfView * 0.5)) * 1.2
+        local direction = Vector3.new(1.15, 0.8, 1.55).Unit
+        camera.CFrame = CFrame.lookAt(direction * distance, Vector3.zero)
+        return viewport
+    end
+
+    local function setIconVisualTint(iconVisual, definition, colorKeyOrFn)
+        if iconVisual and iconVisual:IsA("ImageLabel") then
+            local iconName = readIconSpec(definition)
+            tintIcon(iconVisual, iconName, colorKeyOrFn)
+        end
+    end
+
+    local function createIconVisual(parent, definition, allowThreeD, position, size, zIndex, tint)
+        local iconName, modelSource, iconOptions = readIconSpec(definition)
+        if allowThreeD and isViewportModel(modelSource) then
+            local viewport = makeViewportIcon(parent, modelSource, iconOptions, position, size, zIndex)
+            if viewport then
+                return viewport
+            end
+        end
+
+        if iconName == nil then
+            return nil
+        end
+
+        local image = Instance.new("ImageLabel")
+        image.Name = "Icon"
+        image.Size = size
+        image.Position = position
+        image.BackgroundTransparency = 1
+        image.ScaleType = Enum.ScaleType.Fit
+        image.Image = resolveIcon(iconName)
+        if image.Image == "" and type(iconName) == "string" then
+            if string.find(iconName, "://", 1, true) or tonumber(iconName) then
+                image.Image = string.find(iconName, "://", 1, true) and iconName or ("rbxassetid://" .. iconName)
+            end
+        end
+        image.ZIndex = zIndex or 1
+        image.Parent = parent
+        tintIcon(image, iconName, tint or "TextMuted")
+        return image
+    end
+
+    local function addDropdown(card, name, description, options, defaultIndex, callback, controlOptions)
         local row, top = createRow(card, name, description, {controlHeight = CONTROL_H})
 
         local select = Instance.new("TextButton")
@@ -2534,20 +2740,12 @@ local KEY_ALIASES = {
         addStroke(select)
 
         local currentIdx = defaultIndex or 1
-        local curText, curIconName = normalizeOption(options[currentIdx])
-
-        local selectIcon = Instance.new("ImageLabel")
-        selectIcon.Size = UDim2.new(0, ICON_SIZE, 0, ICON_SIZE)
-        selectIcon.Position = UDim2.new(0, 6, 0.5, -8)
-        selectIcon.BackgroundTransparency = 1
-        selectIcon.Image = resolveIcon(curIconName)
-        tintIcon(selectIcon, curIconName, "TextMuted")
-        selectIcon.Visible = curIconName ~= nil
-        selectIcon.Parent = select
+        local curText = normalizeOption(options[currentIdx])
+        local dropdownThreeDIcons = getThreeDIconsEnabled(controlOptions)
 
         local valueLbl = Instance.new("TextLabel")
         valueLbl.Size = UDim2.new(1, -52, 1, 0)
-        valueLbl.Position = UDim2.new(0, curIconName and 28 or 8, 0, 0)
+        valueLbl.Position = UDim2.new(0, 8, 0, 0)
         valueLbl.BackgroundTransparency = 1
         valueLbl.Text = curText
         valueLbl.Font = Enum.Font.Gotham
@@ -2555,7 +2753,21 @@ local KEY_ALIASES = {
         bindColor(valueLbl, "TextColor3", "TextPrimary")
         valueLbl.TextXAlignment = Enum.TextXAlignment.Left
         valueLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        valueLbl.ZIndex = 2
         valueLbl.Parent = select
+
+        local selectIcon = nil
+        local function setSelectedIcon(optionData)
+            if selectIcon then
+                selectIcon:Destroy()
+                selectIcon = nil
+            end
+            selectIcon = createIconVisual(select, optionData,
+                getThreeDIconsEnabled(optionData, dropdownThreeDIcons),
+                UDim2.new(0, 6, 0.5, -8), UDim2.new(0, ICON_SIZE, 0, ICON_SIZE), 2, "TextMuted")
+            valueLbl.Position = UDim2.new(0, selectIcon and 28 or 8, 0, 0)
+        end
+        setSelectedIcon(options[currentIdx])
 
         local arrow = Instance.new("ImageLabel")
         arrow.Size = UDim2.new(0, CHEVRON_SIZE, 0, CHEVRON_SIZE)
@@ -2619,7 +2831,7 @@ local KEY_ALIASES = {
 
             local rows = {}
             for i, optData in ipairs(options) do
-                local optText, optIconName = normalizeOption(optData)
+                local optText = normalizeOption(optData)
 
                 local ob = Instance.new("TextButton")
                 ob.Size = UDim2.new(1, 0, 0, SELECT_OPTION_H)
@@ -2633,21 +2845,14 @@ local KEY_ALIASES = {
                 addCorner(ob, 4)
                 table.insert(rows, {Frame = ob, Text = optText})
 
-                local obIcon = nil
-                if optIconName then
-                    obIcon = Instance.new("ImageLabel")
-                    obIcon.Size = UDim2.new(0, ICON_SIZE, 0, ICON_SIZE)
-                    obIcon.Position = UDim2.new(0, 6, 0.5, -8)
-                    obIcon.BackgroundTransparency = 1
-                    obIcon.Image = resolveIcon(optIconName)
-                    tintIcon(obIcon, optIconName, function() return ((i == currentIdx)) and "Accent" or "TextMuted" end)
-                    obIcon.ZIndex = 102
-                    obIcon.Parent = ob
-                end
+                local obIcon = createIconVisual(ob, optData,
+                    getThreeDIconsEnabled(optData, dropdownThreeDIcons),
+                    UDim2.new(0, 6, 0.5, -8), UDim2.new(0, ICON_SIZE, 0, ICON_SIZE), 102,
+                    function() return ((i == currentIdx)) and "Accent" or "TextMuted" end)
 
                 local obText = Instance.new("TextLabel")
                 obText.Size = UDim2.new(1, -36, 1, 0)
-                obText.Position = UDim2.new(0, optIconName and 28 or 8, 0, 0)
+                obText.Position = UDim2.new(0, obIcon and 28 or 8, 0, 0)
                 obText.BackgroundTransparency = 1
                 obText.Text = optText
                 obText.Font = Enum.Font.Gotham
@@ -2660,28 +2865,19 @@ local KEY_ALIASES = {
                 ob.MouseEnter:Connect(function()
                     ob.BackgroundTransparency = 0
                     bindColor(obText, "TextColor3", "Accent")
-                    if obIcon then tintIcon(obIcon, optIconName, "Accent") end
+                    setIconVisualTint(obIcon, optData, "Accent")
                 end)
                 ob.MouseLeave:Connect(function()
                     ob.BackgroundTransparency = 1
                     local c = (i == currentIdx) and THEME.Accent or THEME.TextPrimary
                     obText.TextColor3 = c
-                    if obIcon then
-                        tintIcon(obIcon, optIconName, function() return ((i == currentIdx)) and "Accent" or "TextMuted" end)
-                    end
+                    setIconVisualTint(obIcon, optData,
+                        function() return ((i == currentIdx)) and "Accent" or "TextMuted" end)
                 end)
                 ob.MouseButton1Click:Connect(function()
                     currentIdx = i
                     valueLbl.Text = optText
-                    if optIconName then
-                        selectIcon.Image = resolveIcon(optIconName)
-                        tintIcon(selectIcon, optIconName, "TextMuted")
-                        selectIcon.Visible = true
-                        valueLbl.Position = UDim2.new(0, 28, 0, 0)
-                    else
-                        selectIcon.Visible = false
-                        valueLbl.Position = UDim2.new(0, 8, 0, 0)
-                    end
+                    setSelectedIcon(optData)
                     popup:Destroy()
                     currentPopup = nil
                     if callback then callback(optText, i) end
@@ -2696,17 +2892,9 @@ local KEY_ALIASES = {
         local function applySelection(idx, fire)
             if not idx or not options[idx] then return end
             currentIdx = idx
-            local optText, optIconName = normalizeOption(options[idx])
+            local optText = normalizeOption(options[idx])
             valueLbl.Text = optText
-            if optIconName then
-                selectIcon.Image = resolveIcon(optIconName)
-                tintIcon(selectIcon, optIconName, "TextMuted")
-                selectIcon.Visible = true
-                valueLbl.Position = UDim2.new(0, 28, 0, 0)
-            else
-                selectIcon.Visible = false
-                valueLbl.Position = UDim2.new(0, 8, 0, 0)
-            end
+            setSelectedIcon(options[idx])
             if currentPopup and currentPopup.Parent then
                 currentPopup:Destroy()
                 currentPopup = nil
@@ -2979,7 +3167,7 @@ local KEY_ALIASES = {
         })
     end
 
-    local function addButtonRow(card, name, description, buttons)
+    local function addButtonRow(card, name, description, buttons, controlOptions)
         local row, top = createRow(card, name, description, {controlHeight = BUTTON_H})
 
         local holder = Instance.new("Frame")
@@ -2999,13 +3187,20 @@ local KEY_ALIASES = {
 
         local count = #buttons
         local createdButtons = {}
-        for i, def in ipairs(buttons) do
+        local rowThreeDIcons = getThreeDIconsEnabled(controlOptions)
+        for i, buttonDefinition in ipairs(buttons) do
+            local def = buttonDefinition
+            if type(def) ~= "table" then
+                def = {Text = tostring(def)}
+            end
+            local buttonText = tostring(def.Text or "")
+
             local btn = Instance.new("TextButton")
-            btn.Name = def.Text
+            btn.Name = tostring(def.Name or (buttonText ~= "" and buttonText) or ("Button" .. i))
             btn.LayoutOrder = i
             btn.Size = UDim2.new(1 / count, -(gap * (count - 1)) / count, 1, 0)
             bindColor(btn, "BackgroundColor3", "Accent")
-            btn.Text = def.Text
+            btn.Text = buttonText
             btn.AutoButtonColor = false
             btn.Font = Enum.Font.GothamBold
             btn.TextSize = 12
@@ -3013,13 +3208,39 @@ local KEY_ALIASES = {
             btn.Parent = holder
             addCorner(btn, 6)
 
+            local iconVisual = createIconVisual(btn, def,
+                getThreeDIconsEnabled(def, rowThreeDIcons),
+                UDim2.new(0, 8, 0.5, -8), UDim2.new(0, ICON_SIZE, 0, ICON_SIZE), 2, "KnobOn")
+            local iconText = nil
+            if iconVisual then
+                btn.TextTransparency = 1
+                iconText = Instance.new("TextLabel")
+                iconText.Name = "ButtonText"
+                iconText.Size = UDim2.new(1, -39, 1, 0)
+                iconText.Position = UDim2.new(0, 31, 0, 0)
+                iconText.BackgroundTransparency = 1
+                iconText.Text = buttonText
+                iconText.Font = Enum.Font.GothamBold
+                iconText.TextSize = 12
+                bindColor(iconText, "TextColor3", "KnobOn")
+                iconText.TextXAlignment = Enum.TextXAlignment.Left
+                iconText.TextTruncate = Enum.TextTruncate.AtEnd
+                iconText.ZIndex = 2
+                iconText.Parent = btn
+            end
+
             btn.MouseButton1Click:Connect(function()
                 if def.Callback then def.Callback() end
             end)
             table.insert(createdButtons, wrapHandle({
                 Button = btn,
+                Icon = iconVisual,
                 Fire = function() if def.Callback then def.Callback() end end,
-                SetText = function(t) btn.Text = tostring(t) end,
+                SetText = function(t)
+                    local text = tostring(t)
+                    btn.Text = text
+                    if iconText then iconText.Text = text end
+                end,
             }))
         end
         return createdButtons
@@ -3049,8 +3270,9 @@ local KEY_ALIASES = {
         })
     end
 
-    local function addMultiDropdown(card, name, description, options, defaults, callback)
+    local function addMultiDropdown(card, name, description, options, defaults, callback, controlOptions)
         local row, top = createRow(card, name, description, {controlHeight = CONTROL_H})
+        local dropdownThreeDIcons = getThreeDIconsEnabled(controlOptions)
 
         local states = {}
         for i, opt in ipairs(options) do
@@ -3153,7 +3375,7 @@ local KEY_ALIASES = {
 
             local rows = {}
             for i, optData in ipairs(options) do
-                local optText, optIconName = normalizeOption(optData)
+                local optText = normalizeOption(optData)
 
                 local ob = Instance.new("TextButton")
                 ob.Size = UDim2.new(1, 0, 0, SELECT_OPTION_H)
@@ -3167,21 +3389,14 @@ local KEY_ALIASES = {
                 addCorner(ob, 4)
                 table.insert(rows, {Frame = ob, Text = optText})
 
-                local obIcon = nil
-                if optIconName then
-                    obIcon = Instance.new("ImageLabel")
-                    obIcon.Size = UDim2.new(0, ICON_SIZE, 0, ICON_SIZE)
-                    obIcon.Position = UDim2.new(0, 6, 0.5, -8)
-                    obIcon.BackgroundTransparency = 1
-                    obIcon.Image = resolveIcon(optIconName)
-                    tintIcon(obIcon, optIconName, function() return (states[i]) and "Accent" or "TextMuted" end)
-                    obIcon.ZIndex = 102
-                    obIcon.Parent = ob
-                end
+                local obIcon = createIconVisual(ob, optData,
+                    getThreeDIconsEnabled(optData, dropdownThreeDIcons),
+                    UDim2.new(0, 6, 0.5, -8), UDim2.new(0, ICON_SIZE, 0, ICON_SIZE), 102,
+                    function() return (states[i]) and "Accent" or "TextMuted" end)
 
                 local obText = Instance.new("TextLabel")
                 obText.Size = UDim2.new(1, -36, 1, 0)
-                obText.Position = UDim2.new(0, optIconName and 28 or 8, 0, 0)
+                obText.Position = UDim2.new(0, obIcon and 28 or 8, 0, 0)
                 obText.BackgroundTransparency = 1
                 obText.Text = optText
                 obText.Font = Enum.Font.Gotham
@@ -3200,9 +3415,8 @@ local KEY_ALIASES = {
                 ob.MouseButton1Click:Connect(function()
                     states[i] = not states[i]
                     bindColor(obText, "TextColor3", function() return (states[i]) and "Accent" or "TextPrimary" end)
-                    if obIcon then
-                        tintIcon(obIcon, optIconName, function() return (states[i]) and "Accent" or "TextMuted" end)
-                    end
+                    setIconVisualTint(obIcon, optData,
+                        function() return (states[i]) and "Accent" or "TextMuted" end)
                     valueLbl.Text = buildSummary()
                     if callback then callback(options, states) end
                 end)
@@ -4209,7 +4423,7 @@ local KEY_ALIASES = {
                         o = rOpts
                     end
                     return addButtonRow(body, o.Name or o.Title or "",
-                        descOf(o), o.Buttons or o.Value or {})
+                        descOf(o), o.Buttons or o.Value or {}, o)
                 end
 
                 function Section:CreateButton(bOpts, maybeCallback)
@@ -4221,9 +4435,14 @@ local KEY_ALIASES = {
                         o = bOpts
                     end
                     local name = o.Name or o.Title or "Button"
+                    local buttonDefinition = {}
+                    for key, value in pairs(o) do
+                        buttonDefinition[key] = value
+                    end
+                    buttonDefinition.Text = o.Text or name
                     local created = addButtonRow(body, name, descOf(o), {
-                        {Text = o.Text or name, Callback = o.Callback},
-                    })
+                        buttonDefinition,
+                    }, o)
                     return created[1]
                 end
 
@@ -4268,7 +4487,7 @@ local KEY_ALIASES = {
                         Library.Flags[dOpts.Flag] = list[defIdx] and optText(list[defIdx]) or ""
                     end
                     return addDropdown(body, dOpts.Name or dOpts.Title or "Dropdown",
-                        descOf(dOpts), list, defIdx, flagCallback(dOpts.Flag, dOpts.Callback))
+                        descOf(dOpts), list, defIdx, flagCallback(dOpts.Flag, dOpts.Callback), dOpts)
                 end
 
                 function Section:CreateMultiDropdown(mOpts)
@@ -4308,7 +4527,7 @@ local KEY_ALIASES = {
                     end
                     return addMultiDropdown(body, mOpts.Name or mOpts.Title or "Multi",
                         descOf(mOpts), list, defaultsMap,
-                        flagCallback(mOpts.Flag, mOpts.Callback, transform))
+                        flagCallback(mOpts.Flag, mOpts.Callback, transform), mOpts)
                 end
 
                 function Section:CreateInput(iOpts)
