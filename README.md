@@ -51,6 +51,7 @@ Window methods:
 | `Window:CreateCategory(name)` | Sidebar section: groups tabs, click collapses. Returns `{Collapse, Expand, Toggle, IsCollapsed}` |
 | `Window:CreateTab(name, icon)` / `Window:CreateTab({Name, Icon})` | Tab, returns `Tab` |
 | `Window:CreateThemeTab(name, icon)` | Tab with the theme list + custom theme editor |
+| `Window:CreateBrowseTab(opts)` | Full-width gallery tab (search, categories, sort, pages, cards). See [Browse](#browse) |
 | `Window:Notify({Title, Content, Duration, Icon})` | Notification (icon is a Lucide name) |
 | `Window:CreateKeybindList(opts)` | Draggable Keybinds overlay (also `GetKeybindList`, `SetKeybindListVisible`) |
 | `Window:SetTheme(name)` / `Window:SetTheme(name, true)` | Switch theme (2nd arg = silent, no notification) |
@@ -117,6 +118,69 @@ print(toggle:Get())
 
 Orion-style aliases are available: `AddToggle`, `AddButton`, `AddSlider`,
 `AddDropdown`, `AddTextbox`, `AddBind`, `AddColorPicker`, `AddLabel`, etc.
+
+## Browse
+
+`Window:CreateBrowseTab` adds a full-width gallery: a search box, a sort switch
+(Hot / New / A-Z), a refresh button, pagination, category chips and a grid of
+cards (thumbnail, rating badge, name). Items can be loaded from a JSON API, so
+one script works for every user and the list is updated on the server side.
+
+```lua
+local Browse = Window:CreateBrowseTab({
+    Name = "Browse",
+    Icon = "store",
+    Source = "https://example.com/scripts.json", -- JSON API (optional)
+    -- Items = { { Name = "...", Category = "...", Rating = 90, Image = "rbxassetid://...", Data = "..." } },
+    -- Fetch = function(url) return itemsTableOrJsonString end,   -- custom loader
+    -- Parse = function(decoded) return decoded.payload.list end, -- custom response shape
+    Categories = { "Mech", "Car", "Jet", "Tank" }, -- omit to build them from the items ("All" is always first)
+    SortModes = { "Hot", "New", "A-Z" },          -- also "Top", or { Name = "...", Icon = "zap", Sort = function(a, b) end }
+    PageSize = 9,
+    Columns = 3,
+    Lazy = true,                 -- load when the tab is opened the first time (false = load right away)
+    SearchPlaceholder = "Search builds...",
+    Callback = function(item, raw)
+        print(item.Name, item.Category, item.Rating, item.Data)
+    end,
+})
+```
+
+Accepted JSON: an array of objects, or an object with `items` / `data` /
+`results` / `list` / `builds` / `scripts`, or a dictionary keyed by id.
+Field names are matched case-insensitively with common aliases:
+
+| Item field | Aliases in JSON |
+|---|---|
+| `Name` | `name`, `title` |
+| `Category` | `category`, `type`, `class`, `kind` |
+| `Rating` | `rating`, `likes`, `score`, `percent` (0–1 is treated as a fraction) |
+| `Image` / `Images` | `image`, `thumbnail`, `icon`, `images`, `thumbnails`, `previews` (up to 2 are shown side by side) |
+| `Author` | `author`, `creator`, `owner` |
+| `Date` | `date`, `time`, `created`, `timestamp` (used by the "New" sort) |
+| `Tags` | `tags` (also matched by category chips and search) |
+| `Data` | `data`, `payload`, `script`, `url`, `link`, `code` — whatever your callback needs |
+
+The original object is kept in `item.Raw`. Images can be `rbxassetid://…`,
+`rbxthumb://…`, a bare asset id, or an `https://` link (downloaded once and
+cached through `getcustomasset` on executors that support it). Without an image
+the card shows a placeholder icon (`PlaceholderIcon`).
+
+Handle methods:
+
+```lua
+Browse:SetItems(list)            -- replace all items (table, same shapes as the API)
+Browse:AddItem(item) / Browse:RemoveItem(idOrItem)
+Browse:Load(url) / Browse:Refresh()
+Browse:Search("text") / Browse:SetCategory("Tank") / Browse:SetCategories({ ... })
+Browse:SetSort("New") / Browse:SetPage(2) / Browse:NextPage() / Browse:PrevPage()
+Browse:GetItems() / Browse:GetFiltered() / Browse:GetSelected() / Browse:GetPage()
+Browse:SetCallback(fn) / Browse:SetStatus("text") / Browse:Select()
+```
+
+`OnLoad(items)`, `OnError(err)` and `OnRefresh()` options are called around
+API requests. [browse.json](browse.json) is a ready-made example feed and
+[Example.lua](Example.lua) shows it wired to `loadstring(game:HttpGet(item.Data))()`.
 
 ## Keybind list
 

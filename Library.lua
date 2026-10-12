@@ -841,6 +841,7 @@ end
 
 local CARD_INFO = {}
 local CARD_LIST = {}
+local PANEL_LIST = {} -- full-area panels (Browse tab etc.) shown instead of the two columns
 
 local emptyLabel = Instance.new("TextLabel")
 emptyLabel.Name = "EmptyTab"
@@ -862,7 +863,18 @@ showTabContent = function(tabName)
         entry.Card.Visible = show
         if show then shown = shown + 1 end
     end
-    emptyLabel.Visible = shown == 0
+    local panelShown = false
+    for _, entry in ipairs(PANEL_LIST) do
+        local show = entry.Tab == tabName
+        entry.Frame.Visible = show
+        if show then
+            panelShown = true
+            if entry.OnShow then task.spawn(entry.OnShow) end
+        end
+    end
+    Col1.Visible = not panelShown
+    Col2.Visible = not panelShown
+    emptyLabel.Visible = shown == 0 and not panelShown
     for _, entry in ipairs(colLayouts) do
         entry.Col.CanvasPosition = Vector2.new(0, 0)
     end
@@ -3794,6 +3806,944 @@ local KEY_ALIASES = {
         return 1
     end
 
+    --[[ Browse / gallery panel ------------------------------------------------
+        A full-area tab that shows items as a grid of cards (thumbnail, rating
+        badge, name) with a search box, category chips, a sort switch, a refresh
+        button and pagination. Items come from a plain table, a function, or an
+        HTTP JSON API (`Source = "https://.../items.json"`), so the same script
+        works for every user: the list lives on the server, not in the script. ]]
+    local HttpService = game:GetService("HttpService")
+    local BROWSE_IMAGE_CACHE = {}
+    local BROWSE_CACHE_DIR = "UILibrary/cache"
+
+    local function httpGet(url)
+        local ok, body = pcall(function() return game:HttpGet(url, true) end)
+        if ok and type(body) == "string" and #body > 0 then return body end
+        local req = (type(request) == "function" and request)
+            or (type(http_request) == "function" and http_request)
+            or (type(syn) == "table" and type(syn.request) == "function" and syn.request)
+            or nil
+        if req then
+            local ok2, res = pcall(req, {Url = url, Method = "GET"})
+            if ok2 and type(res) == "table" and type(res.Body) == "string" and #res.Body > 0 then
+                return res.Body
+            end
+        end
+        local ok3, body3 = pcall(HttpService.GetAsync, HttpService, url)
+        if ok3 and type(body3) == "string" and #body3 > 0 then return body3 end
+        return nil, (not ok and tostring(body)) or (not ok3 and tostring(body3)) or "request failed"
+    end
+
+    local function stringHash(s)
+        local h = 5381
+        for i = 1, #s do
+            h = (h * 33 + string.byte(s, i)) % 4294967296
+        end
+        return string.format("%08x", h)
+    end
+
+    local function ensureFolder(path)
+        if type(isfolder) ~= "function" or type(makefolder) ~= "function" then return end
+        local ok, exists = pcall(isfolder, path)
+        if ok and not exists then pcall(makefolder, path) end
+    end
+
+    -- Turns anything the API can give us into something ImageLabel.Image accepts.
+    -- http(s) links are downloaded once and served through getcustomasset (executor only).
+    local function resolveBrowseImage(src)
+        if type(src) == "number" then return "rbxassetid://" .. tostring(src) end
+        src = tostring(src or "")
+        if src == "" then return "" end
+        if string.match(src, "^%d+$") then return "rbxassetid://" .. src end
+        if string.match(src, "^rbx") then return src end
+        if string.match(src, "^https?://") then
+            local cached = BROWSE_IMAGE_CACHE[src]
+            if cached ~= nil then return cached end
+            BROWSE_IMAGE_CACHE[src] = ""
+            if type(writefile) ~= "function" or type(getcustomasset) ~= "function" then
+                return ""
+            end
+            local ok, asset = pcall(function()
+                local body = httpGet(src)
+                if not body then return nil end
+                ensureFolder("UILibrary")
+                ensureFolder(BROWSE_CACHE_DIR)
+                local ext = string.find(string.lower(src), "%.jpe?g") and ".jpg" or ".png"
+                local file = BROWSE_CACHE_DIR .. "/" .. stringHash(src) .. ext
+                if not (type(isfile) == "function" and isfile(file)) then
+                    writefile(file, body)
+                end
+                return getcustomasset(file)
+            end)
+            if ok and type(asset) == "string" then
+                BROWSE_IMAGE_CACHE[src] = asset
+                return asset
+            end
+            return ""
+        end
+        return src
+    end
+
+    local function pickField(raw, ...)
+        for _, key in ipairs({...}) do
+            local v = raw[key]
+            if v ~= nil then return v end
+        end
+        return nil
+    end
+
+    local function normalizeBrowseItem(raw, index)
+        if type(raw) ~= "table" then return nil end
+        if raw.__browseItem then return raw end
+        local item = {__browseItem = true, Raw = raw}
+        item.Id = pickField(raw, "Id", "id", "ID", "Key", "key") or index
+        item.Name = tostring(pickField(raw, "Name", "name", "Title", "title") or ("Item " .. tostring(index)))
+        item.Category = tostring(pickField(raw, "Category", "category", "Type", "type", "Class", "class", "Kind", "kind") or "Other")
+        local rating = tonumber(pickField(raw, "Rating", "rating", "Likes", "likes", "Score", "score", "Percent", "percent"))
+        if rating and rating > 0 and rating <= 1 then rating = rating * 100 end
+        item.Rating = rating
+        item.Images = {}
+        local many = pickField(raw, "Images", "images", "Thumbnails", "thumbnails", "Previews", "previews")
+        if type(many) == "table" then
+            for _, img in ipairs(many) do
+                if img ~= nil and img ~= "" then table.insert(item.Images, img) end
+            end
+        end
+        local single = pickField(raw, "Image", "image", "Thumbnail", "thumbnail", "Icon", "icon", "Preview", "preview")
+        if single ~= nil and single ~= "" and #item.Images == 0 then
+            table.insert(item.Images, single)
+        end
+        item.Image = item.Images[1]
+        item.Author = pickField(raw, "Author", "author", "Creator", "creator", "Owner", "owner", "By", "by")
+        item.Date = tonumber(pickField(raw, "Date", "date", "Time", "time", "Created", "created", "Timestamp", "timestamp", "Updated", "updated")) or index
+        item.Tags = pickField(raw, "Tags", "tags")
+        item.Description = pickField(raw, "Description", "description", "Desc", "desc")
+        item.Data = pickField(raw, "Data", "data", "Payload", "payload", "Script", "script", "Url", "url", "Link", "link", "Code", "code")
+        return item
+    end
+
+    local function extractBrowseList(data)
+        if type(data) ~= "table" then return {} end
+        if #data > 0 or next(data) == nil then return data end
+        for _, key in ipairs({"items", "Items", "data", "Data", "results", "Results", "list", "List", "builds", "Builds", "scripts", "Scripts", "entries", "Entries"}) do
+            if type(data[key]) == "table" then return extractBrowseList(data[key]) end
+        end
+        -- dictionary keyed by id -> array
+        local list = {}
+        for key, value in pairs(data) do
+            if type(value) == "table" then
+                if value.Id == nil and value.id == nil then value.Id = key end
+                table.insert(list, value)
+            end
+        end
+        table.sort(list, function(a, b) return tostring(a.Id) < tostring(b.Id) end)
+        return list
+    end
+
+    local BROWSE_SORTS = {
+        Hot = {Icon = "zap", Sort = function(a, b)
+            local ra, rb = a.Rating or -1, b.Rating or -1
+            if ra ~= rb then return ra > rb end
+            if a.Date ~= b.Date then return a.Date > b.Date end
+            return a.Name < b.Name
+        end},
+        New = {Icon = "clock", Sort = function(a, b)
+            if a.Date ~= b.Date then return a.Date > b.Date end
+            return a.Name < b.Name
+        end},
+        Top = {Icon = "crown", Sort = function(a, b)
+            local ra, rb = a.Rating or -1, b.Rating or -1
+            if ra ~= rb then return ra > rb end
+            return a.Name < b.Name
+        end},
+        ["A-Z"] = {Icon = "type", Sort = function(a, b)
+            return string.lower(a.Name) < string.lower(b.Name)
+        end},
+    }
+
+    local function buildBrowsePanel(tabName, opts)
+        opts = opts or {}
+        local columns = math.max(1, math.floor(tonumber(opts.Columns) or 3))
+        local pageSize = math.max(1, math.floor(tonumber(opts.PageSize) or 9))
+        local gap = 8
+        local callback = opts.Callback or opts.OnSelect or opts.OnClick
+        local parse = opts.Parse or opts.Transform
+        local source = opts.Source or opts.Url or opts.Api or opts.API
+        local fetcher = opts.Fetch or opts.Loader
+        local placeholderIcon = opts.PlaceholderIcon or "image"
+        local autoCategories = (opts.Categories == nil)
+
+        -- sort modes: {"Hot", "New"} or {{Name = "Hot", Sort = fn, Icon = "zap"}, ...}
+        local sortModes = {}
+        for _, mode in ipairs(opts.SortModes or opts.Sorts or {"Hot", "New", "A-Z"}) do
+            if type(mode) == "string" and BROWSE_SORTS[mode] then
+                table.insert(sortModes, {Name = mode, Icon = BROWSE_SORTS[mode].Icon, Sort = BROWSE_SORTS[mode].Sort})
+            elseif type(mode) == "table" and type(mode.Sort) == "function" then
+                table.insert(sortModes, {Name = mode.Name or mode.Title or "Sort", Icon = mode.Icon or "zap", Sort = mode.Sort})
+            end
+        end
+        if #sortModes == 0 then
+            table.insert(sortModes, {Name = "Hot", Icon = "zap", Sort = BROWSE_SORTS.Hot.Sort})
+        end
+
+        local state = {
+            Items = {},
+            Filtered = {},
+            Query = "",
+            Category = "All",
+            Categories = {"All"},
+            SortIndex = 1,
+            Page = 1,
+            Pages = 1,
+            Selected = nil,
+            Loading = false,
+            Generation = 0,
+        }
+
+        local Panel = Instance.new("Frame")
+        Panel.Name = "BrowsePanel"
+        Panel.Size = UDim2.new(1, 0, 1, 0)
+        Panel.BackgroundTransparency = 1
+        Panel.Visible = false
+        Panel.ZIndex = 3
+        Panel.Parent = ContentArea
+
+        local panelPad = Instance.new("UIPadding")
+        panelPad.PaddingLeft = UDim.new(0, 4)
+        panelPad.PaddingRight = UDim.new(0, 4)
+        panelPad.PaddingTop = UDim.new(0, 4)
+        panelPad.PaddingBottom = UDim.new(0, 6)
+        panelPad.Parent = Panel
+
+        -- Toolbar --------------------------------------------------------------
+        local TOOL_H = 30
+        local Toolbar = Instance.new("Frame")
+        Toolbar.Size = UDim2.new(1, 0, 0, TOOL_H)
+        Toolbar.BackgroundTransparency = 1
+        Toolbar.ZIndex = 4
+        Toolbar.Parent = Panel
+
+        local sortW = 68
+        local rightW = sortW + 6 + 28 + 10 + 24 + 46 + 24 -- sort, refresh, prev, page, next
+
+        local SearchFrame = Instance.new("Frame")
+        SearchFrame.Size = UDim2.new(1, -(rightW + 8), 1, 0)
+        bindColor(SearchFrame, "BackgroundColor3", "BadgeBg")
+        SearchFrame.BorderSizePixel = 0
+        SearchFrame.ZIndex = 4
+        SearchFrame.Parent = Toolbar
+        addCorner(SearchFrame, 8)
+        local searchStroke = addStroke(SearchFrame, 1)
+
+        local searchIcon = Instance.new("ImageLabel")
+        searchIcon.Size = UDim2.new(0, 13, 0, 13)
+        searchIcon.Position = UDim2.new(0, 10, 0.5, -6.5)
+        searchIcon.BackgroundTransparency = 1
+        searchIcon.Image = resolveIcon("search")
+        tintIcon(searchIcon, "search", "TextMuted")
+        searchIcon.ZIndex = 5
+        searchIcon.Parent = SearchFrame
+
+        local searchInput = Instance.new("TextBox")
+        searchInput.Size = UDim2.new(1, -36, 1, 0)
+        searchInput.Position = UDim2.new(0, 29, 0, 0)
+        searchInput.BackgroundTransparency = 1
+        searchInput.Text = ""
+        searchInput.PlaceholderText = opts.SearchPlaceholder or "Search..."
+        bindColor(searchInput, "PlaceholderColor3", "TextDim")
+        bindColor(searchInput, "TextColor3", "TextPrimary")
+        searchInput.Font = Enum.Font.Gotham
+        searchInput.TextSize = 11
+        searchInput.TextXAlignment = Enum.TextXAlignment.Left
+        searchInput.ClearTextOnFocus = false
+        searchInput.ZIndex = 5
+        searchInput.Parent = SearchFrame
+
+        searchInput.Focused:Connect(function()
+            tweenColors(searchStroke, TWEEN_FAST, {Color = "BorderActive"}):Play()
+        end)
+        searchInput.FocusLost:Connect(function()
+            tweenColors(searchStroke, TWEEN_FAST, {Color = "Border"}):Play()
+        end)
+
+        local function toolButton(width, xOffset, iconName)
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(0, width, 1, 0)
+            btn.Position = UDim2.new(1, -xOffset, 0, 0)
+            bindColor(btn, "BackgroundColor3", "BadgeBg")
+            btn.BorderSizePixel = 0
+            btn.Text = ""
+            btn.AutoButtonColor = false
+            btn.ZIndex = 4
+            btn.Parent = Toolbar
+            addCorner(btn, 8)
+            local stroke = addStroke(btn, 1)
+            local icon
+            if iconName then
+                icon = Instance.new("ImageLabel")
+                icon.Size = UDim2.new(0, 13, 0, 13)
+                icon.Position = UDim2.new(0.5, -6.5, 0.5, -6.5)
+                icon.BackgroundTransparency = 1
+                icon.Image = resolveIcon(iconName)
+                tintIcon(icon, iconName, "TextMuted")
+                icon.ZIndex = 5
+                icon.Parent = btn
+            end
+            btn.MouseEnter:Connect(function()
+                tweenColors(stroke, TWEEN_FAST, {Color = "BorderActive"}):Play()
+                if icon then tweenColors(icon, TWEEN_FAST, {ImageColor3 = "TextPrimary"}):Play() end
+            end)
+            btn.MouseLeave:Connect(function()
+                tweenColors(stroke, TWEEN_FAST, {Color = "Border"}):Play()
+                if icon then tweenColors(icon, TWEEN_FAST, {ImageColor3 = "TextMuted"}):Play() end
+            end)
+            return btn, icon, stroke
+        end
+
+        -- sort switch ("Hot")
+        local SortBtn = toolButton(sortW, rightW, nil)
+        local sortIcon = Instance.new("ImageLabel")
+        sortIcon.Size = UDim2.new(0, 13, 0, 13)
+        sortIcon.Position = UDim2.new(0, 10, 0.5, -6.5)
+        sortIcon.BackgroundTransparency = 1
+        sortIcon.Image = resolveIcon(sortModes[1].Icon)
+        tintIcon(sortIcon, sortModes[1].Icon, "Accent")
+        sortIcon.ZIndex = 5
+        sortIcon.Parent = SortBtn
+        local sortLabel = Instance.new("TextLabel")
+        sortLabel.Size = UDim2.new(1, -30, 1, 0)
+        sortLabel.Position = UDim2.new(0, 28, 0, 0)
+        sortLabel.BackgroundTransparency = 1
+        sortLabel.Text = sortModes[1].Name
+        sortLabel.Font = Enum.Font.GothamBold
+        sortLabel.TextSize = 11
+        bindColor(sortLabel, "TextColor3", "TextPrimary")
+        sortLabel.TextXAlignment = Enum.TextXAlignment.Left
+        sortLabel.ZIndex = 5
+        sortLabel.Parent = SortBtn
+
+        local RefreshBtn, refreshIcon = toolButton(28, rightW - sortW - 6, "refresh-cw")
+        local PrevBtn, prevIcon = toolButton(24, 24 + 46 + 24, "chevron-right")
+        prevIcon.Rotation = 180
+        local NextBtn = toolButton(24, 24, "chevron-right")
+
+        local PageLabel = Instance.new("TextLabel")
+        PageLabel.Size = UDim2.new(0, 46, 1, 0)
+        PageLabel.Position = UDim2.new(1, -(24 + 46), 0, 0)
+        PageLabel.BackgroundTransparency = 1
+        PageLabel.Text = "1/1"
+        PageLabel.Font = Enum.Font.GothamMedium
+        PageLabel.TextSize = 11
+        bindColor(PageLabel, "TextColor3", "TextMuted")
+        PageLabel.ZIndex = 5
+        PageLabel.Parent = Toolbar
+
+        -- Category chips -------------------------------------------------------
+        local CHIP_H = 24
+        local Chips = Instance.new("ScrollingFrame")
+        Chips.Size = UDim2.new(1, 0, 0, CHIP_H)
+        Chips.Position = UDim2.new(0, 0, 0, TOOL_H + 8)
+        Chips.BackgroundTransparency = 1
+        Chips.BorderSizePixel = 0
+        Chips.ScrollBarThickness = 0
+        Chips.ScrollingDirection = Enum.ScrollingDirection.X
+        Chips.CanvasSize = UDim2.new(0, 0, 0, 0)
+        Chips.AutomaticCanvasSize = Enum.AutomaticSize.X
+        Chips.ZIndex = 4
+        Chips.Parent = Panel
+
+        local chipLayout = Instance.new("UIListLayout")
+        chipLayout.FillDirection = Enum.FillDirection.Horizontal
+        chipLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        chipLayout.Padding = UDim.new(0, 6)
+        chipLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+        chipLayout.Parent = Chips
+
+        local chipButtons = {}
+
+        -- Grid -----------------------------------------------------------------
+        local GRID_TOP = TOOL_H + 8 + CHIP_H + 8
+        local Grid = Instance.new("ScrollingFrame")
+        Grid.Size = UDim2.new(1, 0, 1, -GRID_TOP)
+        Grid.Position = UDim2.new(0, 0, 0, GRID_TOP)
+        Grid.BackgroundTransparency = 1
+        Grid.BorderSizePixel = 0
+        Grid.ScrollBarThickness = 2
+        bindColor(Grid, "ScrollBarImageColor3", "Accent")
+        Grid.ScrollingDirection = Enum.ScrollingDirection.Y
+        Grid.CanvasSize = UDim2.new(0, 0, 0, 0)
+        Grid.ZIndex = 4
+        Grid.Parent = Panel
+
+        local gridLayout = Instance.new("UIGridLayout")
+        gridLayout.CellPadding = UDim2.new(0, gap, 0, gap)
+        gridLayout.CellSize = UDim2.new(0, 180, 0, 124)
+        gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+        gridLayout.Parent = Grid
+
+        local gridPad = Instance.new("UIPadding")
+        gridPad.PaddingRight = UDim.new(0, 6)
+        gridPad.PaddingBottom = UDim.new(0, 4)
+        gridPad.Parent = Grid
+
+        local Status = Instance.new("TextLabel")
+        Status.Size = UDim2.new(1, 0, 0, 40)
+        Status.Position = UDim2.new(0, 0, 0, GRID_TOP + 60)
+        Status.BackgroundTransparency = 1
+        Status.Text = ""
+        Status.Font = Enum.Font.GothamMedium
+        Status.TextSize = 12
+        bindColor(Status, "TextColor3", "TextDim")
+        Status.Visible = false
+        Status.ZIndex = 5
+        Status.Parent = Panel
+
+        local NAME_H = 26
+        local function updateCellSize()
+            local width = Grid.AbsoluteSize.X / math.max(UI_SCALE, 0.01) - 6
+            if width <= 0 then return end
+            local cellW = math.floor((width - gap * (columns - 1)) / columns)
+            local cellH = math.floor(cellW * 0.55) + NAME_H
+            gridLayout.CellSize = UDim2.new(0, cellW, 0, cellH)
+        end
+        Grid:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateCellSize)
+        gridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+            Grid.CanvasSize = UDim2.new(0, 0, 0, gridLayout.AbsoluteContentSize.Y / math.max(UI_SCALE, 0.01) + 8)
+        end)
+        task.defer(updateCellSize)
+
+        local function setStatus(text)
+            Status.Text = text or ""
+            Status.Visible = text ~= nil and text ~= ""
+        end
+
+        -- Cards ------------------------------------------------------------------
+        local cardPool = {}
+
+        local function formatRating(r)
+            if not r then return nil end
+            return string.format("%d%%", math.floor(r + 0.5))
+        end
+
+        local function fillThumb(thumb, item, generation)
+            for _, child in ipairs(thumb:GetChildren()) do
+                if child:IsA("ImageLabel") then child:Destroy() end
+            end
+            local sources = {}
+            for i = 1, math.min(2, #item.Images) do sources[i] = item.Images[i] end
+            if #sources == 0 then
+                local ph = Instance.new("ImageLabel")
+                ph.Size = UDim2.new(0, 22, 0, 22)
+                ph.Position = UDim2.new(0.5, -11, 0.5, -11)
+                ph.BackgroundTransparency = 1
+                ph.Image = resolveIcon(placeholderIcon)
+                tintIcon(ph, placeholderIcon, "TextDim")
+                ph.ZIndex = 6
+                ph.Parent = thumb
+                return
+            end
+            local count = #sources
+            for i, src in ipairs(sources) do
+                local img = Instance.new("ImageLabel")
+                img.Size = UDim2.new(1 / count, count > 1 and -1 or 0, 1, 0)
+                img.Position = UDim2.new((i - 1) / count, (i > 1) and 1 or 0, 0, 0)
+                img.BackgroundTransparency = 1
+                img.ScaleType = Enum.ScaleType.Crop
+                img.ZIndex = 6
+                img.Parent = thumb
+                local immediate = (type(src) == "string" and string.match(src, "^https?://")) and nil or resolveBrowseImage(src)
+                if immediate then
+                    img.Image = immediate
+                else
+                    task.spawn(function()
+                        local asset = resolveBrowseImage(src)
+                        if state.Generation == generation and img.Parent then
+                            img.Image = asset
+                        end
+                    end)
+                end
+            end
+        end
+
+        local function createBrowseCard(index)
+            local card = Instance.new("TextButton")
+            card.Name = "Card"
+            card.LayoutOrder = index
+            bindColor(card, "BackgroundColor3", "CardBg")
+            card.BorderSizePixel = 0
+            card.Text = ""
+            card.AutoButtonColor = false
+            card.ClipsDescendants = true
+            card.ZIndex = 5
+            card.Parent = Grid
+            addCorner(card, 8)
+            local stroke = addStroke(card, 1)
+
+            local thumb = Instance.new("Frame")
+            thumb.Name = "Thumb"
+            thumb.Size = UDim2.new(1, 0, 1, -NAME_H)
+            bindColor(thumb, "BackgroundColor3", "PillBg")
+            thumb.BorderSizePixel = 0
+            thumb.ClipsDescendants = true
+            thumb.ZIndex = 5
+            thumb.Parent = card
+            addCorner(thumb, 8)
+
+            local thumbFill = Instance.new("Frame") -- squares off the bottom corners of the thumbnail
+            thumbFill.Size = UDim2.new(1, 0, 0, 10)
+            thumbFill.Position = UDim2.new(0, 0, 1, -10)
+            bindColor(thumbFill, "BackgroundColor3", "PillBg")
+            thumbFill.BorderSizePixel = 0
+            thumbFill.ZIndex = 5
+            thumbFill.Parent = thumb
+
+            local badge = Instance.new("Frame")
+            badge.Name = "Badge"
+            badge.Size = UDim2.new(0, 44, 0, 16)
+            badge.AutomaticSize = Enum.AutomaticSize.X
+            badge.Position = UDim2.new(1, -6, 0, 6)
+            badge.AnchorPoint = Vector2.new(1, 0)
+            bindColor(badge, "BackgroundColor3", "Background")
+            badge.BackgroundTransparency = 0.25
+            badge.BorderSizePixel = 0
+            badge.ZIndex = 7
+            badge.Parent = thumb
+            addCorner(badge, 5)
+            local badgePad = Instance.new("UIPadding")
+            badgePad.PaddingLeft = UDim.new(0, 6)
+            badgePad.PaddingRight = UDim.new(0, 6)
+            badgePad.Parent = badge
+
+            local badgeText = Instance.new("TextLabel")
+            badgeText.Size = UDim2.new(0, 0, 1, 0)
+            badgeText.AutomaticSize = Enum.AutomaticSize.X
+            badgeText.BackgroundTransparency = 1
+            badgeText.Text = ""
+            badgeText.RichText = true
+            badgeText.Font = Enum.Font.GothamBold
+            badgeText.TextSize = 10
+            bindColor(badgeText, "TextColor3", "TextPrimary")
+            badgeText.ZIndex = 8
+            badgeText.Parent = badge
+
+            local name = Instance.new("TextLabel")
+            name.Name = "Title"
+            name.Size = UDim2.new(1, -16, 0, NAME_H)
+            name.Position = UDim2.new(0, 8, 1, -NAME_H)
+            name.BackgroundTransparency = 1
+            name.Text = ""
+            name.Font = Enum.Font.GothamMedium
+            name.TextSize = 11
+            bindColor(name, "TextColor3", "TextPrimary")
+            name.TextXAlignment = Enum.TextXAlignment.Left
+            name.TextTruncate = Enum.TextTruncate.AtEnd
+            name.ZIndex = 6
+            name.Parent = card
+
+            local entry = {Button = card, Stroke = stroke, Thumb = thumb, Badge = badge, BadgeText = badgeText, Name = name, Item = nil}
+
+            card.MouseEnter:Connect(function()
+                if state.Selected ~= entry.Item then
+                    tweenColors(stroke, TWEEN_FAST, {Color = "BorderActive"}):Play()
+                end
+                tweenColors(card, TWEEN_FAST, {BackgroundColor3 = "SidebarActive"}):Play()
+            end)
+            card.MouseLeave:Connect(function()
+                if state.Selected ~= entry.Item then
+                    tweenColors(stroke, TWEEN_FAST, {Color = "Border"}):Play()
+                end
+                tweenColors(card, TWEEN_FAST, {BackgroundColor3 = "CardBg"}):Play()
+            end)
+            card.MouseButton1Click:Connect(function()
+                if not entry.Item then return end
+                state.Selected = entry.Item
+                for _, other in ipairs(cardPool) do
+                    tweenColors(other.Stroke, TWEEN_FAST, {Color = (other.Item == entry.Item) and "Accent" or "Border"}):Play()
+                end
+                if callback then
+                    task.spawn(callback, entry.Item, entry.Item.Raw)
+                end
+            end)
+            return entry
+        end
+
+        local accentHex = function()
+            local c = THEME.Accent
+            return string.format("#%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+        end
+
+        local function renderPage()
+            state.Generation = state.Generation + 1
+            local generation = state.Generation
+            local total = #state.Filtered
+            state.Pages = math.max(1, math.ceil(total / pageSize))
+            state.Page = math.clamp(state.Page, 1, state.Pages)
+            PageLabel.Text = string.format("%d/%d", state.Page, state.Pages)
+
+            local first = (state.Page - 1) * pageSize + 1
+            local shown = 0
+            for i = first, math.min(total, first + pageSize - 1) do
+                shown = shown + 1
+                local entry = cardPool[shown]
+                if not entry then
+                    entry = createBrowseCard(shown)
+                    cardPool[shown] = entry
+                end
+                local item = state.Filtered[i]
+                entry.Item = item
+                entry.Button.Visible = true
+                entry.Button.LayoutOrder = shown
+                entry.Name.Text = item.Name
+                local ratingText = formatRating(item.Rating)
+                entry.Badge.Visible = ratingText ~= nil
+                entry.BadgeText.Text = ratingText and (string.format('<font color="%s">★</font> ', accentHex()) .. ratingText) or ""
+                bindColor(entry.Stroke, "Color", (state.Selected == item) and "Accent" or "Border")
+                fillThumb(entry.Thumb, item, generation)
+            end
+            for i = shown + 1, #cardPool do
+                cardPool[i].Item = nil
+                cardPool[i].Button.Visible = false
+            end
+            Grid.CanvasPosition = Vector2.new(0, 0)
+
+            if state.Loading then
+                setStatus("Loading...")
+            elseif total == 0 then
+                setStatus(#state.Items == 0 and (opts.EmptyText or "Nothing here yet") or "Nothing found")
+            else
+                setStatus(nil)
+            end
+        end
+
+        local function itemMatchesCategory(item, category)
+            if category == nil or category == "All" then return true end
+            local wanted = string.lower(tostring(category))
+            if string.lower(tostring(item.Category or "")) == wanted then return true end
+            if type(item.Tags) == "table" then
+                for _, tag in ipairs(item.Tags) do
+                    if string.lower(tostring(tag)) == wanted then return true end
+                end
+            end
+            return false
+        end
+
+        local function itemMatchesQuery(item, query)
+            if query == "" then return true end
+            local hay = string.lower(table.concat({
+                item.Name or "", tostring(item.Author or ""), tostring(item.Category or ""),
+                tostring(item.Id or ""), tostring(item.Description or ""),
+                type(item.Tags) == "table" and table.concat(item.Tags, " ") or "",
+            }, " "))
+            return string.find(hay, query, 1, true) ~= nil
+        end
+
+        local function applyFilters(keepPage)
+            local query = string.lower(trimText(state.Query))
+            local list = {}
+            for _, item in ipairs(state.Items) do
+                if itemMatchesCategory(item, state.Category) and itemMatchesQuery(item, query) then
+                    table.insert(list, item)
+                end
+            end
+            local mode = sortModes[state.SortIndex]
+            if mode and mode.Sort then
+                table.sort(list, function(a, b)
+                    local ok, res = pcall(mode.Sort, a, b)
+                    return ok and res == true
+                end)
+            end
+            state.Filtered = list
+            if not keepPage then state.Page = 1 end
+            renderPage()
+        end
+
+        -- chips
+        local function setChipActive(chip, active)
+            chip.Active = active
+            tweenColors(chip.Button, TWEEN_FAST, {BackgroundColor3 = active and "Accent" or "BadgeBg"}):Play()
+            tweenColors(chip.Stroke, TWEEN_FAST, {Color = active and "Accent" or "Border"}):Play()
+            tweenColors(chip.Label, TWEEN_FAST, {TextColor3 = active and "KnobOn" or "TextMuted"}):Play()
+        end
+
+        local setCategory -- forward
+
+        local function rebuildChips()
+            for _, chip in ipairs(chipButtons) do chip.Button:Destroy() end
+            chipButtons = {}
+            for i, name in ipairs(state.Categories) do
+                local btn = Instance.new("TextButton")
+                btn.Size = UDim2.new(0, 0, 1, 0)
+                btn.AutomaticSize = Enum.AutomaticSize.X
+                btn.LayoutOrder = i
+                btn.BorderSizePixel = 0
+                btn.Text = ""
+                btn.AutoButtonColor = false
+                btn.ZIndex = 5
+                btn.Parent = Chips
+                addCorner(btn, 12)
+                local stroke = addStroke(btn, 1)
+                local pad = Instance.new("UIPadding")
+                pad.PaddingLeft = UDim.new(0, 12)
+                pad.PaddingRight = UDim.new(0, 12)
+                pad.Parent = btn
+                local label = Instance.new("TextLabel")
+                label.Size = UDim2.new(0, 0, 1, 0)
+                label.AutomaticSize = Enum.AutomaticSize.X
+                label.BackgroundTransparency = 1
+                label.Text = name
+                label.Font = Enum.Font.GothamMedium
+                label.TextSize = 10.5
+                label.ZIndex = 6
+                label.Parent = btn
+                local chip = {Button = btn, Stroke = stroke, Label = label, Name = name, Active = (name == state.Category)}
+                bindColor(btn, "BackgroundColor3", chip.Active and "Accent" or "BadgeBg")
+                bindColor(stroke, "Color", chip.Active and "Accent" or "Border")
+                bindColor(label, "TextColor3", chip.Active and "KnobOn" or "TextMuted")
+                btn.MouseEnter:Connect(function()
+                    if not chip.Active then tweenColors(label, TWEEN_FAST, {TextColor3 = "TextPrimary"}):Play() end
+                end)
+                btn.MouseLeave:Connect(function()
+                    if not chip.Active then tweenColors(label, TWEEN_FAST, {TextColor3 = "TextMuted"}):Play() end
+                end)
+                btn.MouseButton1Click:Connect(function() setCategory(name) end)
+                table.insert(chipButtons, chip)
+            end
+        end
+
+        setCategory = function(name)
+            name = tostring(name or "All")
+            state.Category = name
+            for _, chip in ipairs(chipButtons) do
+                setChipActive(chip, chip.Name == name)
+            end
+            applyFilters(false)
+        end
+
+        local function setCategories(list)
+            local cats = {"All"}
+            local seen = {All = true}
+            for _, c in ipairs(list or {}) do
+                local key = tostring(c)
+                if not seen[key] then
+                    seen[key] = true
+                    table.insert(cats, key)
+                end
+            end
+            state.Categories = cats
+            if not seen[state.Category] then state.Category = "All" end
+            rebuildChips()
+        end
+
+        local function collectCategories(items)
+            local list, seen = {}, {}
+            for _, item in ipairs(items) do
+                local c = tostring(item.Category or "")
+                if c ~= "" and not seen[c] then
+                    seen[c] = true
+                    table.insert(list, c)
+                end
+            end
+            table.sort(list)
+            return list
+        end
+
+        local function setItems(list)
+            local items = {}
+            for i, raw in ipairs(extractBrowseList(list)) do
+                local item = normalizeBrowseItem(raw, i)
+                if item then table.insert(items, item) end
+            end
+            state.Items = items
+            state.Selected = nil
+            if autoCategories then
+                setCategories(collectCategories(items))
+            end
+            applyFilters(false)
+        end
+
+        local function setSort(indexOrName)
+            local idx = tonumber(indexOrName)
+            if not idx then
+                for i, mode in ipairs(sortModes) do
+                    if string.lower(mode.Name) == string.lower(tostring(indexOrName)) then idx = i break end
+                end
+            end
+            if not idx or not sortModes[idx] then return end
+            state.SortIndex = idx
+            local mode = sortModes[idx]
+            sortLabel.Text = mode.Name
+            sortIcon.Image = resolveIcon(mode.Icon)
+            tintIcon(sortIcon, mode.Icon, "Accent")
+            applyFilters(false)
+        end
+
+        local loadToken = 0
+        local function load(newSource)
+            if newSource ~= nil then source = newSource end
+            if not source and not fetcher then
+                return false
+            end
+            loadToken = loadToken + 1
+            local token = loadToken
+            state.Loading = true
+            setStatus("Loading...")
+            task.spawn(function()
+                local ok, result = pcall(function()
+                    if fetcher then
+                        local out = fetcher(source, state)
+                        if type(out) == "string" then
+                            out = HttpService:JSONDecode(out)
+                        end
+                        return out
+                    end
+                    local body, err = httpGet(tostring(source))
+                    if not body then error(err or "request failed") end
+                    local ok2, decoded = pcall(HttpService.JSONDecode, HttpService, body)
+                    if not ok2 then error("invalid JSON from " .. tostring(source)) end
+                    return decoded
+                end)
+                if token ~= loadToken or isClosed then return end
+                state.Loading = false
+                if ok then
+                    if parse then
+                        local okParse, parsed = pcall(parse, result)
+                        if okParse and parsed ~= nil then
+                            result = parsed
+                        end
+                    end
+                    setItems(result)
+                    if opts.OnLoad then task.spawn(opts.OnLoad, state.Items) end
+                else
+                    setItems({})
+                    setStatus("Failed to load")
+                    Notify({
+                        Title = opts.Name or "Browse",
+                        Content = "Failed to load: " .. tostring(result),
+                        Icon = "alert-triangle",
+                        Duration = 4,
+                    })
+                    if opts.OnError then task.spawn(opts.OnError, result) end
+                end
+            end)
+            return true
+        end
+
+        -- wiring -------------------------------------------------------------------
+        local searchDebounce = 0
+        searchInput:GetPropertyChangedSignal("Text"):Connect(function()
+            searchDebounce = searchDebounce + 1
+            local id = searchDebounce
+            state.Query = searchInput.Text
+            task.delay(0.15, function()
+                if id == searchDebounce and not isClosed then applyFilters(false) end
+            end)
+        end)
+
+        SortBtn.MouseButton1Click:Connect(function()
+            local nextIdx = state.SortIndex % #sortModes + 1
+            setSort(nextIdx)
+        end)
+
+        RefreshBtn.MouseButton1Click:Connect(function()
+            TweenService:Create(refreshIcon, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {Rotation = refreshIcon.Rotation + 360}):Play()
+            if not load() then
+                applyFilters(true)
+            end
+            if opts.OnRefresh then task.spawn(opts.OnRefresh) end
+        end)
+
+        local function setPage(n)
+            n = math.floor(tonumber(n) or 1)
+            state.Page = math.clamp(n, 1, state.Pages)
+            renderPage()
+        end
+        PrevBtn.MouseButton1Click:Connect(function() setPage(state.Page - 1) end)
+        NextBtn.MouseButton1Click:Connect(function() setPage(state.Page + 1) end)
+
+        -- initial data
+        if not autoCategories then
+            setCategories(opts.Categories)
+        else
+            rebuildChips()
+        end
+        if opts.Sort then setSort(opts.Sort) end
+        if opts.Items then
+            setItems(opts.Items)
+        else
+            applyFilters(false)
+        end
+        local loadedOnce = false
+        local function ensureLoaded()
+            if loadedOnce then return end
+            loadedOnce = true
+            load()
+        end
+
+        table.insert(PANEL_LIST, {
+            Frame = Panel,
+            Tab = tabName,
+            OnShow = function()
+                updateCellSize()
+                if opts.Lazy ~= false then ensureLoaded() end
+            end,
+        })
+        if opts.Lazy == false then
+            task.spawn(ensureLoaded)
+        end
+
+        -- public handle ------------------------------------------------------------
+        local Browse = {}
+        Browse.Panel = Panel
+        function Browse:SetItems(list) setItems(list or {}) end
+        function Browse:AddItem(raw)
+            local item = normalizeBrowseItem(raw, #state.Items + 1)
+            if not item then return end
+            table.insert(state.Items, item)
+            if autoCategories then setCategories(collectCategories(state.Items)) end
+            applyFilters(true)
+            return item
+        end
+        function Browse:RemoveItem(idOrItem)
+            for i, item in ipairs(state.Items) do
+                if item == idOrItem or item.Id == idOrItem then
+                    table.remove(state.Items, i)
+                    break
+                end
+            end
+            applyFilters(true)
+        end
+        function Browse:GetItems() return state.Items end
+        function Browse:GetFiltered() return state.Filtered end
+        function Browse:GetSelected() return state.Selected end
+        function Browse:Load(url) loadedOnce = true return load(url) end
+        function Browse:Refresh()
+            loadedOnce = true
+            if not load() then applyFilters(true) end
+        end
+        function Browse:SetSource(url) source = url end
+        function Browse:SetCategories(list) autoCategories = false setCategories(list) applyFilters(false) end
+        function Browse:SetCategory(name) setCategory(name) end
+        function Browse:GetCategory() return state.Category end
+        function Browse:Search(text)
+            searchInput.Text = tostring(text or "")
+        end
+        function Browse:GetQuery() return state.Query end
+        function Browse:SetSort(mode) setSort(mode) end
+        function Browse:GetSort() return sortModes[state.SortIndex].Name end
+        function Browse:SetPage(n) setPage(n) end
+        function Browse:GetPage() return state.Page, state.Pages end
+        function Browse:NextPage() setPage(state.Page + 1) end
+        function Browse:PrevPage() setPage(state.Page - 1) end
+        function Browse:SetCallback(fn) callback = fn end
+        function Browse:SetStatus(text) setStatus(text) end
+        function Browse:IsLoading() return state.Loading end
+        Browse.Reload = Browse.Refresh
+        Browse.Filter = Browse.SetCategory
+        Browse.OnSelect = Browse.SetCallback
+        return Browse
+    end
+
     local function buildThemeCards(themeTabName)
     local cardSettings = createCard(Col1, "Settings", 0, themeTabName)
     setThemeLabel = addDropdown(cardSettings, "Theme", "Changes the color palette of the whole UI", THEME_NAMES, themeDefaultIndex(), function(themeName)
@@ -4420,6 +5370,31 @@ local KEY_ALIASES = {
             end
             return tab
         end
+
+        --[[ Browse tab: a full-width gallery (search, category chips, sort,
+            pagination, grid of cards). Items can be a table, a loader function
+            or a JSON API url, so one script serves every user. ]]
+        function Window:CreateBrowseTab(browseOptions, iconMaybe)
+            local bOpts = {}
+            if type(browseOptions) == "string" then
+                bOpts.Name = browseOptions
+                bOpts.Icon = iconMaybe
+            elseif type(browseOptions) == "table" then
+                bOpts = browseOptions
+            end
+            local tab = Window:CreateTab(bOpts.Name or bOpts.Title or "Browse", bOpts.Icon or "store")
+            local browse = buildBrowsePanel(tab.Name, bOpts)
+            browse.Tab = tab
+            browse.Name = tab.Name
+            function browse:Select() tab:Select() end
+            if activeSidebarTab then
+                showTabContent(activeSidebarTab.Name)
+            end
+            return browse
+        end
+        Window.CreateGalleryTab = Window.CreateBrowseTab
+        Window.CreateBrowser = Window.CreateBrowseTab
+        Window.AddBrowseTab = Window.CreateBrowseTab
 
         function Window:Notify(opts)
             return Notify(opts)

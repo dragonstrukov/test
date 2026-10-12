@@ -145,6 +145,38 @@ Speed:CreateSlider({
     end,
 })
 
+-- Browse: a gallery of universal scripts loaded from a JSON API, so the list
+-- is the same for every user and can be updated without touching the script.
+-- JSON format: {"items": [{"name", "category", "rating", "author", "image"/"images", "url"}, ...]}
+Window:CreateCategory("Library")
+local Browse = Window:CreateBrowseTab({
+    Name = "Browse",
+    Icon = "store",
+    Source = "https://raw.githubusercontent.com/dragonstrukov/test/main/browse.json",
+    Categories = { "Universal", "Combat", "Movement", "Visuals", "Misc" }, -- omit to build them from the items
+    SortModes = { "Hot", "New", "A-Z" },
+    PageSize = 9,
+    Columns = 3,
+    SearchPlaceholder = "Search scripts...",
+    Callback = function(item)
+        -- item.Name, item.Category, item.Rating, item.Author, item.Data (= "url"), item.Raw (= original JSON)
+        if not item.Data then return end
+        Window:Notify({ Title = "Browse", Content = "Loading " .. item.Name .. "...", Icon = "download", Duration = 2 })
+        task.spawn(function()
+            local ok, err = pcall(function()
+                loadstring(game:HttpGet(tostring(item.Data)))()
+            end)
+            if not ok then
+                Window:Notify({ Title = "Browse", Content = "Failed: " .. tostring(err), Icon = "alert-triangle", Duration = 4 })
+            end
+        end)
+    end,
+})
+
+-- The same panel can also be filled from code (no API):
+-- Browse:SetItems({ { Name = "Local script", Category = "Misc", Rating = 50, Data = "https://..." } })
+-- Browse:Search("esp") / Browse:SetCategory("Visuals") / Browse:SetSort("New") / Browse:Refresh()
+
 Window:CreateCategory({ Name = "Manager", Collapsed = true })
 Window:CreateThemeTab("Themes", "palette")
 
