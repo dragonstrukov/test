@@ -4573,9 +4573,12 @@ local KEY_ALIASES = {
             if anchorScale then dialogScale = anchorScale.Scale end
         end
         local viewport = getViewportSize()
-        local widthMargin = isMobileDevice(viewport) and 16 or 28
+        local mobileDialog = isMobileDevice(viewport)
+        local widthMargin = mobileDialog and 16 or 28
         local maxWidth = math.max(180, (viewport.X - widthMargin * 2) / math.max(dialogScale, 0.01))
+        local maxHeight = math.max(180, (viewport.Y - widthMargin * 2) / math.max(dialogScale, 0.01))
         local width = math.min(tonumber(dOpts.Width) or DIALOG_W, maxWidth)
+        local resizable = dOpts.Resizable ~= false
         local connections = {}
         local closed = false
         local handle = {}
@@ -5920,6 +5923,196 @@ local KEY_ALIASES = {
         handle.AddSeparator = handle.AddDivider
         handle.HStack = handle.AddHStack
 
+        -- Resizable dialogs keep their header visible and scroll the body when
+        -- the user makes the modal shorter than its content.
+        local dialogBody, dialogBodyContent, dialogBodyLayout
+        local dialogChromeHeight = 0
+        local dialogHasFixedSize = false
+        local resizeGripHost, resizeGrip
+        local function updateDialogBodyCanvas()
+            if not dialogBody or not dialogBodyLayout then return end
+            local contentHeight = dialogBodyLayout.AbsoluteContentSize.Y / math.max(dialogScale, 0.01)
+            dialogBody.CanvasSize = UDim2.new(0, 0, 0, contentHeight + 6)
+        end
+        local function setDialogFixedSize(widthValue, heightValue)
+            if not resizable or not dialogBody then return end
+            if not dialogHasFixedSize then
+                local totalHeight = box.AbsoluteSize.Y / math.max(dialogScale, 0.01)
+                local bodyHeight = dialogBody.AbsoluteSize.Y / math.max(dialogScale, 0.01)
+                dialogChromeHeight = totalHeight - bodyHeight
+                if bodyHeight <= 0 or dialogChromeHeight < 1 then dialogChromeHeight = 54 end
+                dialogHasFixedSize = true
+            end
+            box.AutomaticSize = Enum.AutomaticSize.None
+            dialogBody.AutomaticSize = Enum.AutomaticSize.None
+            box.Size = UDim2.new(0, widthValue, 0, heightValue)
+            dialogBody.Size = UDim2.new(1, 0, 0, math.max(0, heightValue - dialogChromeHeight))
+            task.defer(updateDialogBodyCanvas)
+        end
+
+        if resizable then
+            dialogBody = Instance.new("ScrollingFrame")
+            dialogBody.Name = "DialogBody"
+            dialogBody.Size = UDim2.new(1, 0, 0, 0)
+            dialogBody.AutomaticSize = Enum.AutomaticSize.Y
+            dialogBody.BackgroundTransparency = 1
+            dialogBody.BorderSizePixel = 0
+            dialogBody.LayoutOrder = 2
+            dialogBody.Active = true
+            dialogBody.ScrollingEnabled = true
+            dialogBody.ScrollingDirection = Enum.ScrollingDirection.Y
+            dialogBody.ScrollBarThickness = mobileDialog and 4 or 3
+            dialogBody.AutomaticCanvasSize = Enum.AutomaticSize.None
+            dialogBody.CanvasSize = UDim2.new(0, 0, 0, 0)
+            bindColor(dialogBody, "ScrollBarImageColor3", "Accent")
+            dialogBody.ZIndex = 151
+            dialogBody.Parent = box
+
+            dialogBodyContent = Instance.new("Frame")
+            dialogBodyContent.Name = "DialogBodyContent"
+            dialogBodyContent.Size = UDim2.new(1, 0, 0, 0)
+            dialogBodyContent.AutomaticSize = Enum.AutomaticSize.Y
+            dialogBodyContent.BackgroundTransparency = 1
+            dialogBodyContent.ZIndex = 151
+            dialogBodyContent.Parent = dialogBody
+            local bodyPadding = Instance.new("UIPadding")
+            bodyPadding.PaddingBottom = UDim.new(0, 6)
+            bodyPadding.Parent = dialogBodyContent
+            dialogBodyLayout = Instance.new("UIListLayout")
+            dialogBodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
+            dialogBodyLayout.Padding = list.Padding
+            dialogBodyLayout.Parent = dialogBodyContent
+
+            local originalChildren = box:GetChildren()
+            for _, child in ipairs(originalChildren) do
+                if child:IsA("GuiObject") and child ~= header and child ~= dialogBody then
+                    child.Parent = dialogBodyContent
+                end
+            end
+            table.insert(connections, dialogBodyLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateDialogBodyCanvas))
+            task.defer(updateDialogBodyCanvas)
+
+            resizeGripHost = Instance.new("Frame")
+            resizeGripHost.Name = "DialogResizeGripHost"
+            resizeGripHost.BackgroundTransparency = 1
+            resizeGripHost.BorderSizePixel = 0
+            resizeGripHost.Active = false
+            resizeGripHost.Visible = false
+            resizeGripHost.ZIndex = 155
+            resizeGripHost.Parent = layer
+            FLOATING_FRAMES[resizeGripHost] = true
+
+            local gripSize = mobileDialog and 28 or 18
+            resizeGrip = Instance.new("TextButton")
+            resizeGrip.Name = "ResizeHandle"
+            resizeGrip.Size = UDim2.new(0, gripSize, 0, gripSize)
+            resizeGrip.Position = UDim2.new(1, -gripSize, 1, -gripSize)
+            resizeGrip.BackgroundTransparency = 1
+            resizeGrip.Text = ""
+            resizeGrip.AutoButtonColor = false
+            resizeGrip.Active = true
+            resizeGrip.ZIndex = 156
+            resizeGrip.Parent = resizeGripHost
+            local gripLines = {}
+            for index, spec in ipairs({{-4, -4, 14}, {-4, -8, 8}}) do
+                local line = Instance.new("Frame")
+                line.Size = UDim2.new(0, spec[3], 0, 1)
+                line.Position = UDim2.new(1, spec[1], 1, spec[2])
+                line.AnchorPoint = Vector2.new(1, 1)
+                bindColor(line, "BackgroundColor3", "TextDim")
+                line.BorderSizePixel = 0
+                line.ZIndex = 157
+                line.Parent = resizeGrip
+                addCorner(line, 4)
+                gripLines[index] = line
+            end
+            resizeGrip.MouseEnter:Connect(function()
+                for _, line in ipairs(gripLines) do bindColor(line, "BackgroundColor3", "Accent") end
+            end)
+            resizeGrip.MouseLeave:Connect(function()
+                for _, line in ipairs(gripLines) do bindColor(line, "BackgroundColor3", "TextDim") end
+            end)
+
+            local function updateGripHost()
+                if not box.Parent or not resizeGripHost.Parent then return end
+                local origin = Vector2.zero
+                pcall(function() origin = layer.AbsolutePosition end)
+                local topLeft = box.AbsolutePosition - origin
+                resizeGripHost.Position = UDim2.fromOffset(
+                    topLeft.X + box.AbsoluteSize.X - gripSize,
+                    topLeft.Y + box.AbsoluteSize.Y - gripSize)
+                resizeGripHost.Size = UDim2.fromOffset(gripSize, gripSize)
+                resizeGripHost.Visible = box.Visible
+            end
+            table.insert(connections, box:GetPropertyChangedSignal("AbsolutePosition"):Connect(updateGripHost))
+            table.insert(connections, box:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateGripHost))
+            task.defer(updateGripHost)
+
+            local minResizeWidth = math.min(tonumber(dOpts.MinWidth) or 220, maxWidth)
+            local minResizeHeight = math.min(tonumber(dOpts.MinHeight) or 180, maxHeight)
+            local resizing, resizeStart, startPixels, startPos, startTopLeft, activeInputType = false, nil, nil, nil, nil, nil
+            resizeGrip.InputBegan:Connect(function(input)
+                if input.UserInputType ~= Enum.UserInputType.MouseButton1
+                    and input.UserInputType ~= Enum.UserInputType.Touch then
+                    return
+                end
+                if closed then return end
+                resizing = true
+                activeInputType = input.UserInputType
+                resizeStart = input.Position
+                startPixels = box.AbsoluteSize
+                startPos = box.Position
+                startTopLeft = box.AbsolutePosition
+                setDialogFixedSize(startPixels.X / math.max(dialogScale, 0.01), startPixels.Y / math.max(dialogScale, 0.01))
+            end)
+            table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+                if not resizing then return end
+                if input.UserInputType ~= Enum.UserInputType.MouseMovement
+                    and input.UserInputType ~= Enum.UserInputType.Touch then
+                    return
+                end
+                local delta = input.Position - resizeStart
+                local currentViewport = getViewportSize()
+                local minPixelW = minResizeWidth * dialogScale
+                local minPixelH = minResizeHeight * dialogScale
+                local centerX = startTopLeft.X + startPixels.X / 2
+                local centerY = startTopLeft.Y + startPixels.Y / 2
+                local maxPixelW = math.max(minPixelW, 2 * math.min(centerX - widthMargin, currentViewport.X - centerX - widthMargin))
+                local maxPixelH = math.max(minPixelH, 2 * math.min(centerY - widthMargin, currentViewport.Y - centerY - widthMargin))
+                local pixelW = math.clamp(startPixels.X + delta.X, minPixelW, maxPixelW)
+                local pixelH = math.clamp(startPixels.Y + delta.Y, minPixelH, maxPixelH)
+                local logicalW = pixelW / math.max(dialogScale, 0.01)
+                local logicalH = pixelH / math.max(dialogScale, 0.01)
+                setDialogFixedSize(logicalW, logicalH)
+                box.Position = UDim2.new(
+                    startPos.X.Scale, startPos.X.Offset + (pixelW - startPixels.X) / 2,
+                    startPos.Y.Scale, startPos.Y.Offset + (pixelH - startPixels.Y) / 2)
+            end))
+            table.insert(connections, UserInputService.InputEnded:Connect(function(input)
+                local ended = (activeInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseButton1)
+                    or (activeInputType == Enum.UserInputType.Touch and input.UserInputType == Enum.UserInputType.Touch)
+                if ended then
+                    resizing = false
+                    activeInputType = nil
+                    if type(dOpts.OnResize) == "function" then
+                        task.spawn(dOpts.OnResize, box.Size.X.Offset, box.Size.Y.Offset, handle)
+                    end
+                end
+            end))
+
+            -- Keep very tall dialogs on-screen before the user touches the grip.
+            task.defer(function()
+                task.wait()
+                if closed or not box.Parent then return end
+                local naturalHeight = box.AbsoluteSize.Y / math.max(dialogScale, 0.01)
+                if naturalHeight > maxHeight then
+                    local naturalWidth = box.AbsoluteSize.X / math.max(dialogScale, 0.01)
+                    setDialogFixedSize(naturalWidth, maxHeight)
+                end
+                updateGripHost()
+            end)
+        end
+
         -- Behaviour ---------------------------------------------------------------
         do -- drag by the header
             local dragging, dragStart, startPos = false, nil, nil
@@ -5947,6 +6140,10 @@ local KEY_ALIASES = {
             if closed then return end
             closed = true
             if activeDialog == handle then activeDialog = nil end
+            if resizeGripHost then
+                resizeGripHost:Destroy()
+                resizeGripHost = nil
+            end
             for _, c in ipairs(connections) do c:Disconnect() end
             connections = {}
             TweenService:Create(overlay, TWEEN_FAST, {BackgroundTransparency = 1}):Play()

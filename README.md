@@ -495,8 +495,13 @@ Button styles: `Primary = true` (filled accent), `Accent = true` (accent text),
 default (neutral). `Close = true` closes the dialog after the callback. Only one
 dialog is open at a time; Esc, the ✕ button and a click on the backdrop close it
 (a press that starts inside the dialog never closes it, so dragging is safe).
-The header can be dragged. `Anchor = someFrame` centers the dialog over that
-frame instead of the main window; `ImageLoader` works like in Browse.
+The header can be dragged. Dialogs can also be resized from the bottom-right
+corner with mouse or touch; the body scrolls if you make a dialog shorter than
+its contents. Set `Resizable = false` to hide the resize grip, or pass
+`MinWidth` / `MinHeight` to adjust the smallest size. `OnResize(width, height,
+dialog)` fires when a resize drag ends. `Anchor = someFrame`
+centers the dialog over that frame instead of the main window; `ImageLoader`
+works like in Browse.
 
 ## Shared internals / companion scripts
 
