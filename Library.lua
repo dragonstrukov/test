@@ -6293,7 +6293,8 @@ local KEY_ALIASES = {
         Status.Parent = Panel
 
         local NAME_H = 26
-        local MARKET_INFO_H = 60
+        local MARKET_INFO_H = 72
+        local MARKET_THUMB_RATIO = 0.36
         local function columnsForWidth(width)
             if not marketStyle or opts.Responsive == false then return columns end
             if mobileColumns then return math.min(columns, mobileColumns) end
@@ -6306,7 +6307,7 @@ local KEY_ALIASES = {
             if width <= 0 then return end
             local activeColumns = columnsForWidth(width)
             local cellW = math.floor((width - gap * (activeColumns - 1)) / activeColumns)
-            local cellH = marketStyle and (math.floor(cellW * 0.48) + MARKET_INFO_H)
+            local cellH = marketStyle and (math.floor(cellW * MARKET_THUMB_RATIO) + MARKET_INFO_H)
                 or (math.floor(cellW * 0.55) + NAME_H)
             gridLayout.CellSize = UDim2.new(0, cellW, 0, cellH)
         end
@@ -6622,7 +6623,7 @@ local KEY_ALIASES = {
 
             local thumb = Instance.new("Frame")
             thumb.Name = "Thumb"
-            thumb.Size = marketStyle and UDim2.new(1, 0, 0.48, 0) or UDim2.new(1, 0, 1, -NAME_H)
+            thumb.Size = marketStyle and UDim2.new(1, 0, 1, -MARKET_INFO_H) or UDim2.new(1, 0, 1, -NAME_H)
             bindColor(thumb, "BackgroundColor3", "PillBg")
             thumb.BorderSizePixel = 0
             thumb.ClipsDescendants = true
@@ -6670,8 +6671,8 @@ local KEY_ALIASES = {
 
             local name = Instance.new("TextLabel")
             name.Name = "Title"
-            name.Size = marketStyle and UDim2.new(1, -16, 0, 18) or UDim2.new(1, -16, 0, NAME_H)
-            name.Position = marketStyle and UDim2.new(0, 8, 0.48, 7) or UDim2.new(0, 8, 1, -NAME_H)
+            name.Size = marketStyle and UDim2.new(1, -16, 0, 16) or UDim2.new(1, -16, 0, NAME_H)
+            name.Position = marketStyle and UDim2.new(0, 8, 1, -(MARKET_INFO_H - 4)) or UDim2.new(0, 8, 1, -NAME_H)
             name.BackgroundTransparency = 1
             name.Text = ""
             name.Font = Enum.Font.GothamMedium
@@ -6707,8 +6708,8 @@ local KEY_ALIASES = {
 
                 statsRow = Instance.new("Frame")
                 statsRow.Name = "Stats"
-                statsRow.Size = UDim2.new(1, -16, 0, 16)
-                statsRow.Position = UDim2.new(0, 8, 0.48, 28)
+                statsRow.Size = UDim2.new(1, -16, 0, 14)
+                statsRow.Position = UDim2.new(0, 8, 1, -(MARKET_INFO_H - 22))
                 statsRow.BackgroundTransparency = 1
                 statsRow.ZIndex = 6
                 statsRow.Parent = card
@@ -6749,9 +6750,9 @@ local KEY_ALIASES = {
 
                 actionRow = Instance.new("Frame")
                 actionRow.Name = "Actions"
-                actionRow.Size = UDim2.new(1, -16, 0, 26)
+                actionRow.Size = UDim2.new(1, -16, 0, 24)
                 actionRow.AnchorPoint = Vector2.new(0, 1)
-                actionRow.Position = UDim2.new(0, 8, 1, -8)
+                actionRow.Position = UDim2.new(0, 8, 1, -6)
                 actionRow.BackgroundTransparency = 1
                 actionRow.ZIndex = 7
                 actionRow.Parent = card
