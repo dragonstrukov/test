@@ -347,6 +347,76 @@ CatalogSection:CreateButton({
     end,
 })
 
+-- Separate Browsec / File Market UI. This is independent from the Browse
+-- gallery above and uses the same item/fetch API with build-specific fields.
+local FileMarket
+FileMarket = Window:CreateBrowsec({
+    Name = "File Market",
+    Description = "Community builds and files",
+    Width = 920, Height = 620,
+    ToggleKey = Enum.KeyCode.M,
+    Categories = { "Aircraft", "Buildings", "Vehicles" },
+    SortModes = { "Newest", "Most downloaded", "Most popular" },
+    Sort = "Most downloaded",
+    Items = {
+        {
+            Id = "sky-fortress", Name = "Sky Fortress", Category = "Aircraft",
+            Author = "Builder42", Verified = true, Published = "Oct 12, 2026",
+            Image = "rbxassetid://81973586053257", Downloads = 1824, Likes = 96,
+            BuildValue = 3226, Buildability = 94, BlockCount = 317,
+            BlockList = { { Name = "Metal Block", Count = 220 }, { Name = "Glass", Count = 52 }, { Name = "Thruster", Count = 8 } },
+            ViewUrl = "https://example.com/builds/sky-fortress/3d",
+        },
+        {
+            Id = "desert-outpost", Name = "Desert Outpost", Category = "Buildings",
+            Author = "KiteWorks", Verified = true, Published = "Oct 10, 2026",
+            Image = "rbxassetid://130551565616516", Downloads = 986, Likes = 74,
+            BuildValue = 2180, Buildability = 0.88, BlockCount = 204,
+            BlockList = { "Wood", "Glass", "Roof Tile", "Door" },
+            ViewUrl = "https://example.com/builds/desert-outpost/3d",
+        },
+        {
+            Id = "rally-car", Name = "Rally Car", Category = "Vehicles",
+            Author = "NovaBuilds", Verified = false, Published = "Oct 08, 2026",
+            Image = "rbxassetid://110273524101447", Downloads = 731, Likes = 53,
+            BuildValue = 1740, Buildability = 0.76, BlockCount = 156,
+            BlockList = { "Frame", "Wheel", "Engine", "Seat" },
+            ViewUrl = "https://example.com/builds/rally-car/3d",
+        },
+    },
+    DownloadCallback = function(item)
+        print("Download build:", item.Name, item.Data)
+    end,
+    Details = function(item)
+        return {
+            Stats = {
+                { Label = "Downloads", Value = item.Downloads, Icon = "download" },
+                { Label = "Build Value", Value = item.BuildValue, Icon = "coins" },
+            },
+            Buildability = { Value = item.Buildability, Label = "Buildability", Detail = "Required blocks found" },
+            Blocks = item.BlockList and { Count = item.BlockCount, Items = item.BlockList } or item.BlockCount,
+            ShareLink = { Url = item.ViewUrl, Label = "View in 3D in your browser" },
+        }
+    end,
+    OnDetails = function(item, dialog)
+        dialog:AddHStack({
+            { Text = "Favorite", Icon = "plus", Callback = function(d) print("Favorite:", d.Data.Name) end },
+            { Text = "More from author", Icon = "user", Callback = function(d) FileMarket:Search(d.Data.Author) end },
+        })
+    end,
+})
+
+-- Add a third action to each card. Actions are laid out in one HStack.
+FileMarket:AddButton({
+    Text = "Author", Icon = "user",
+    Callback = function(item) print("Author:", item.Author) end,
+})
+local MarketSection = ToolsTab:CreateSection("File Market", 2)
+MarketSection:CreateButton({
+    Name = "Open File Market",
+    Callback = function() FileMarket:Open() end,
+})
+
 -- Dialogs can also be opened directly:
 -- Window:CreateDialog({ Title = "Hello", Lines = { "Line one", { Text = "Warning", Icon = "alert-triangle", Color = "Accent" } },
 --     Buttons = { { Text = "OK", Primary = true, Close = true }, { "Cancel", "Later" } } })

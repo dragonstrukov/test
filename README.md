@@ -53,6 +53,7 @@ Window methods:
 | `Window:CreateThemeTab(name, icon)` | Tab with the theme list + custom theme editor |
 | `Window:CreateBrowseTab(opts)` | Full-width gallery tab (search, categories, sort, pages, cards). See [Browse](#browse) |
 | `Window:CreateBrowseWindow(opts)` | The same gallery in its own draggable window, opened with `Browse:Open()`. See [Browse window](#browse-window) |
+| `Window:CreateBrowsec(opts)` | Separate File Market window with rank cards, category/sort filters, download actions and build details. See [Browsec File Market](#browsec-file-market) |
 | `Window:CreateDialog(opts)` / `Window:CloseDialog()` | Centered modal card with pictures, info lines and buttons. See [Dialog](#dialog) |
 | `Window:Notify({Title, Content, Duration, Icon})` | Notification (icon is a Lucide name) |
 | `Window:CreateKeybindList(opts)` | Draggable Keybinds overlay (also `GetKeybindList`, `SetKeybindListVisible`) |
@@ -250,6 +251,86 @@ with it. The header shows the logo, title, an item counter (`7 960`), the
 `Tabs` switch and a close button. `Window:CreateBrowsePanel(frame, opts)` puts
 the bare panel into any frame of your own.
 
+### Browsec File Market
+
+`CreateBrowsec` opens a **separate** File Market window; it does not replace or
+change `CreateBrowseTab` / `CreateBrowseWindow`. It uses the dark three-column
+card layout, category chips and a sort dropdown (`Newest`, `Most downloaded`,
+`Most popular`). Cards can show rank, preview, block/download/popularity counts,
+and Details/Download actions. The details dialog supports author verification,
+metrics, buildability, block lists and a copyable 3D link.
+
+```lua
+local Market
+Market = Window:CreateBrowsec({
+    Name = "File Market", Description = "7,460 builds on lsup.pro",
+    Width = 920, Height = 620,
+    Items = {
+        {
+            Id = "sky-fortress", Name = "Sky Fortress", Category = "Aircraft",
+            Author = "Builder42", Verified = true, Published = "Oct 2026",
+            Image = "rbxassetid://81973586053257", Downloads = 1824, Likes = 96,
+            BuildValue = 3226, Buildability = 0.94, BlockCount = 317,
+            BlockList = {"Metal Block", "Glass", "Thruster"},
+            ViewUrl = "https://example.com/builds/sky-fortress/3d",
+        },
+    },
+    Categories = { "Aircraft", "Buildings", "Vehicles" }, -- omit to infer from items
+    SortModes = { "Newest", "Most downloaded", "Most popular" },
+    Sort = "Most downloaded",
+    DownloadCallback = function(item, raw, market)
+        print("Download build:", item.Name, item.Data)
+    end,
+    Details = function(item, market) -- omitted fields keep the default detail UI
+        return {
+            Author = item.Author, Verified = item.Verified,
+            Stats = {
+                { Label = "Downloads", Value = item.Downloads, Icon = "download" },
+                { Label = "Build Value", Value = item.BuildValue, Icon = "coins" },
+            },
+            Buildability = { Value = item.Buildability, Label = "Buildability", Detail = "All required blocks found" },
+            Blocks = item.BlockList and { Count = item.BlockCount, Items = item.BlockList } or item.BlockCount,
+            ShareLink = { Url = item.ViewUrl, Label = "View in 3D in your browser" },
+        }
+    end,
+    OnDetails = function(item, dialog)
+        -- Add a two-button horizontal group to the open details dialog.
+        dialog:AddHStack({
+            { Text = "Favorite", Icon = "plus", Callback = function(d) print("Favorite", d.Data.Name) end },
+            { Text = "More from author", Icon = "user", Callback = function(d) Market:Search(item.Author) end },
+        })
+    end,
+})
+
+Market:Open() -- also Close(), Toggle(), IsOpen(), SetItems(), Search(), etc.
+
+-- Card buttons share one HStack. The built-in Details and Download buttons can
+-- be customized with CardButtons, or append another button at runtime (up to 3
+-- fit comfortably in a row):
+Market:AddButton({ Text = "Author", Icon = "user", Callback = function(item) print(item.Author) end })
+-- Market:AddHStack({ {Text = "Preview", Icon = "eye", Callback = ...}, {Text = "Pin", Icon = "plus", Callback = ...} })
+```
+
+The default market card buttons are Details and Download. `CardButtons = { ... }`
+replaces them; each button accepts `Text`, `Icon`, `Primary`, `Action = "Details"`
+or `"Download"`, and `Callback(item, market)`. `Market:AddButton(def)` and
+`Market:AddHStack(defs)` add actions to every card. `DownloadCallback(item, raw,
+market)` runs for the built-in download action. Items accept `Downloads`,
+`Likes` / `Popularity`, `BuildValue`, `Buildability` (fraction or percent),
+`BlockCount`, `BlockList`, `Verified`, `Published` and `ViewUrl` in addition to
+the regular Browse fields. Options such as `Source`, `Fetch`, `ImageLoader`,
+`ToggleKey`, `Resizable` and `OnResize` work as they do in Browse.
+
+For reusable content in `Details`, use `Stats`, `Buildability`, `Blocks`,
+`ShareLink`, or a list of typed `Elements` such as
+`{ Type = "HStack", Items = { {Text = "One"}, {Text = "Two"} } }`.
+The returned dialog can also be extended from `OnDetails` with
+`dialog:AddButton`, `AddHStack`, `AddLabel` / `AddText`, `AddDivider`,
+`AddProgressBar`, `AddStats`, `AddBlocks`, `AddCopyLink` or `AddElement`.
+`HStack` accepts two or three buttons (or text/button elements). Callbacks in a
+`Details` spec receive `(item, dialog)`; callbacks passed to a runtime
+`dialog:AddButton` / `AddHStack` receive `(dialog)`.
+
 ### Server-side paging (`Fetch`)
 
 For APIs that page / search / sort on the server, give Browse a `Fetch`
@@ -291,6 +372,12 @@ Field names are matched case-insensitively with common aliases:
 | `Tags` | `tags` (also matched by category chips and search) |
 | `Data` | `data`, `payload`, `script`, `url`, `link`, `code` — whatever your callback needs |
 | `Fit` | `fit`, `contain` — show the picture with air around it (icons) instead of cropping it |
+| `Downloads` | `downloads`, `download_count` |
+| `Likes` / `Popularity` | `likes`, `favorites`, `stars` / `popularity` |
+| `BuildValue` / `Buildability` | `build_value`, `value`, `cost` / `buildability`, `completeness` (fraction or percent) |
+| `BlockCount` / `BlockList` | `block_count`, `part_count` / `blocks`, `block_list`, `block_names` |
+| `Verified` / `Published` | `verified`, `author_verified` / `published`, `published_at`, `created_at` |
+| `ViewUrl` | `view_url`, `preview_url`, `3d_url` — used for the copyable 3D preview link |
 
 The original object is kept in `item.Raw`. Images can be `rbxassetid://…`,
 `rbxthumb://…`, a bare asset id, or an `https://` link (downloaded once and
