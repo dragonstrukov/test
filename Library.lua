@@ -5955,6 +5955,21 @@ local KEY_ALIASES = {
             dialogBody.Size = UDim2.new(1, 0, 0, math.max(0, heightValue - dialogChromeHeight))
             task.defer(updateDialogBodyCanvas)
         end
+        local capCheckPending = false
+        local function scheduleAutoHeightCap()
+            if not resizable or dialogHasFixedSize or capCheckPending or closed then return end
+            capCheckPending = true
+            task.defer(function()
+                task.wait()
+                capCheckPending = false
+                if closed or dialogHasFixedSize or not box.Parent then return end
+                local naturalHeight = box.AbsoluteSize.Y / math.max(dialogScale, 0.01)
+                if naturalHeight > maxHeight then
+                    local naturalWidth = box.AbsoluteSize.X / math.max(dialogScale, 0.01)
+                    setDialogFixedSize(naturalWidth, maxHeight)
+                end
+            end)
+        end
 
         if resizable then
             dialogBody = Instance.new("ScrollingFrame")
@@ -5982,9 +5997,6 @@ local KEY_ALIASES = {
             dialogBodyContent.BackgroundTransparency = 1
             dialogBodyContent.ZIndex = 151
             dialogBodyContent.Parent = dialogBody
-            local bodyPadding = Instance.new("UIPadding")
-            bodyPadding.PaddingBottom = UDim.new(0, gripBottomClearance)
-            bodyPadding.Parent = dialogBodyContent
             dialogBodyLayout = Instance.new("UIListLayout")
             dialogBodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
             dialogBodyLayout.Padding = list.Padding
@@ -5996,6 +6008,15 @@ local KEY_ALIASES = {
                     child.Parent = dialogBodyContent
                 end
             end
+            -- A layout item makes the reserve part of AutomaticSize/CanvasSize.
+            local gripSpacer = Instance.new("Frame")
+            gripSpacer.Name = "ResizeGripClearance"
+            gripSpacer.Size = UDim2.new(1, 0, 0, math.max(0, gripBottomClearance - list.Padding.Offset))
+            gripSpacer.LayoutOrder = runtimeHolder.LayoutOrder + 1
+            gripSpacer.BackgroundTransparency = 1
+            gripSpacer.BorderSizePixel = 0
+            gripSpacer.ZIndex = 151
+            gripSpacer.Parent = dialogBodyContent
             table.insert(connections, dialogBodyLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateDialogBodyCanvas))
             table.insert(connections, dialogBodyContent:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateDialogBodyCanvas))
             task.defer(updateDialogBodyCanvas)
@@ -6053,6 +6074,7 @@ local KEY_ALIASES = {
             end
             table.insert(connections, box:GetPropertyChangedSignal("AbsolutePosition"):Connect(updateGripHost))
             table.insert(connections, box:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateGripHost))
+            table.insert(connections, box:GetPropertyChangedSignal("AbsoluteSize"):Connect(scheduleAutoHeightCap))
             task.defer(updateGripHost)
 
             local minResizeWidth = math.min(tonumber(dOpts.MinWidth) or 220, maxWidth)
@@ -6107,17 +6129,8 @@ local KEY_ALIASES = {
                 end
             end))
 
-            -- Keep very tall dialogs on-screen before the user touches the grip.
-            task.defer(function()
-                task.wait()
-                if closed or not box.Parent then return end
-                local naturalHeight = box.AbsoluteSize.Y / math.max(dialogScale, 0.01)
-                if naturalHeight > maxHeight then
-                    local naturalWidth = box.AbsoluteSize.X / math.max(dialogScale, 0.01)
-                    setDialogFixedSize(naturalWidth, maxHeight)
-                end
-                updateGripHost()
-            end)
+            -- Cap after initial layout and any later runtime content additions.
+            scheduleAutoHeightCap()
         end
 
         -- Behaviour ---------------------------------------------------------------
