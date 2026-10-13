@@ -4579,6 +4579,11 @@ local KEY_ALIASES = {
         local maxHeight = math.max(180, (viewport.Y - widthMargin * 2) / math.max(dialogScale, 0.01))
         local width = math.min(tonumber(dOpts.Width) or DIALOG_W, maxWidth)
         local resizable = dOpts.Resizable ~= false
+        local boxBottomPadding = 12
+        local gripSize = mobileDialog and 28 or 18
+        -- The grip is unscaled in the dialog ScreenGui; convert its clearance
+        -- back to dialog units so it remains safe at every dialog scale.
+        local gripBottomClearance = math.max(0, (gripSize + 4) / math.max(dialogScale, 0.01) - boxBottomPadding)
         local connections = {}
         local closed = false
         local handle = {}
@@ -4605,6 +4610,7 @@ local KEY_ALIASES = {
         bindColor(box, "BackgroundColor3", "Background")
         box.BorderSizePixel = 0
         box.Active = true -- sinks input: clicks/drags inside never reach the backdrop
+        box.ClipsDescendants = resizable
         box.ZIndex = 150
         box.Parent = layer
         FLOATING_FRAMES[box] = true
@@ -4631,7 +4637,7 @@ local KEY_ALIASES = {
 
         local pad = Instance.new("UIPadding")
         pad.PaddingTop = UDim.new(0, 10)
-        pad.PaddingBottom = UDim.new(0, 12)
+        pad.PaddingBottom = UDim.new(0, boxBottomPadding)
         pad.PaddingLeft = UDim.new(0, 12)
         pad.PaddingRight = UDim.new(0, 12)
         pad.Parent = box
@@ -5930,9 +5936,9 @@ local KEY_ALIASES = {
         local dialogHasFixedSize = false
         local resizeGripHost, resizeGrip
         local function updateDialogBodyCanvas()
-            if not dialogBody or not dialogBodyLayout then return end
-            local contentHeight = dialogBodyLayout.AbsoluteContentSize.Y / math.max(dialogScale, 0.01)
-            dialogBody.CanvasSize = UDim2.new(0, 0, 0, contentHeight + 6)
+            if not dialogBody or not dialogBodyContent then return end
+            local contentHeight = dialogBodyContent.AbsoluteSize.Y / math.max(dialogScale, 0.01)
+            dialogBody.CanvasSize = UDim2.new(0, 0, 0, contentHeight)
         end
         local function setDialogFixedSize(widthValue, heightValue)
             if not resizable or not dialogBody then return end
@@ -5959,6 +5965,7 @@ local KEY_ALIASES = {
             dialogBody.BorderSizePixel = 0
             dialogBody.LayoutOrder = 2
             dialogBody.Active = true
+            dialogBody.ClipsDescendants = true
             dialogBody.ScrollingEnabled = true
             dialogBody.ScrollingDirection = Enum.ScrollingDirection.Y
             dialogBody.ScrollBarThickness = mobileDialog and 4 or 3
@@ -5976,7 +5983,7 @@ local KEY_ALIASES = {
             dialogBodyContent.ZIndex = 151
             dialogBodyContent.Parent = dialogBody
             local bodyPadding = Instance.new("UIPadding")
-            bodyPadding.PaddingBottom = UDim.new(0, 6)
+            bodyPadding.PaddingBottom = UDim.new(0, gripBottomClearance)
             bodyPadding.Parent = dialogBodyContent
             dialogBodyLayout = Instance.new("UIListLayout")
             dialogBodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -5990,6 +5997,7 @@ local KEY_ALIASES = {
                 end
             end
             table.insert(connections, dialogBodyLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateDialogBodyCanvas))
+            table.insert(connections, dialogBodyContent:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateDialogBodyCanvas))
             task.defer(updateDialogBodyCanvas)
 
             resizeGripHost = Instance.new("Frame")
@@ -6002,7 +6010,6 @@ local KEY_ALIASES = {
             resizeGripHost.Parent = layer
             FLOATING_FRAMES[resizeGripHost] = true
 
-            local gripSize = mobileDialog and 28 or 18
             resizeGrip = Instance.new("TextButton")
             resizeGrip.Name = "ResizeHandle"
             resizeGrip.Size = UDim2.new(0, gripSize, 0, gripSize)
