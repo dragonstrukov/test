@@ -6682,7 +6682,8 @@ local KEY_ALIASES = {
             name.ZIndex = 6
             name.Parent = card
 
-            local rankBadge, rankText, statsRow, metricCells, actionRow
+            local rankBadge, rankText, statsRow, metricCells, actionRow, actionLayout
+            local actionButtonSizes = {}
             if marketStyle then
                 rankBadge = Instance.new("Frame")
                 rankBadge.Name = "RankBadge"
@@ -6755,10 +6756,11 @@ local KEY_ALIASES = {
                 actionRow.BackgroundTransparency = 1
                 actionRow.ZIndex = 7
                 actionRow.Parent = card
-                local actionLayout = Instance.new("UIListLayout")
+                actionLayout = Instance.new("UIListLayout")
                 actionLayout.FillDirection = Enum.FillDirection.Horizontal
                 actionLayout.SortOrder = Enum.SortOrder.LayoutOrder
                 actionLayout.Padding = UDim.new(0, 6)
+                actionLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
                 actionLayout.VerticalAlignment = Enum.VerticalAlignment.Center
                 actionLayout.Parent = actionRow
             end
@@ -6768,6 +6770,21 @@ local KEY_ALIASES = {
                 entry.RankText = rankText
                 entry.MetricCells = metricCells
                 entry.ActionRow = actionRow
+                local function fitActionButtonSizes()
+                    local count = #actionButtonSizes
+                    if count == 0 then return end
+                    local scale = math.max(panelScale(), 0.01)
+                    local available = actionRow.AbsoluteSize.X / scale
+                    if available <= 0 then return end
+                    local gaps = actionLayout.Padding.Offset * (count - 1)
+                    local desired = 0
+                    for _, spec in ipairs(actionButtonSizes) do desired = desired + spec.Width end
+                    local compression = desired > 0 and math.min(1, math.max(0, available - gaps) / desired) or 1
+                    for _, spec in ipairs(actionButtonSizes) do
+                        spec.Button.Size = UDim2.new(0, math.max(48, math.floor(spec.Width * compression)), 1, 0)
+                    end
+                end
+                actionRow:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitActionButtonSizes)
                 entry.SetMarketMetrics = function(item, rank)
                     rankText.Text = "#" .. tostring(item.Rank or rank or 1)
                     local metrics = {}
@@ -6789,6 +6806,7 @@ local KEY_ALIASES = {
                     for _, child in ipairs(actionRow:GetChildren()) do
                         if child:IsA("GuiButton") then child:Destroy() end
                     end
+                    actionButtonSizes = {}
                     local count = #cardActionDefs
                     actionRow.Visible = count > 0
                     if count == 0 then return end
@@ -6796,7 +6814,7 @@ local KEY_ALIASES = {
                         local def = type(rawDef) == "string" and {Text = rawDef} or rawDef
                         if type(def) == "table" then
                             local btn = Instance.new("TextButton")
-                            btn.Size = UDim2.new(1 / count, -(6 * (count - 1)) / count, 1, 0)
+                            btn.Size = UDim2.new(0, 52, 1, 0)
                             btn.LayoutOrder = actionIndex
                             btn.BorderSizePixel = 0
                             btn.Text = ""
@@ -6816,6 +6834,15 @@ local KEY_ALIASES = {
                             local buttonText = tostring(def.Text or def.Name or "Action")
                             local hasIcon = iconSlot:Set(iconName, iconModel, buttonText)
                             if hasIcon then iconSlot:Tint(textKey) end
+                            local measuredTextWidth = #buttonText * 6
+                            local measuredOk, measuredBounds = pcall(function()
+                                return TextService:GetTextSize(buttonText, 9.5, Enum.Font.GothamBold, Vector2.new(1024, 26))
+                            end)
+                            if measuredOk then measuredTextWidth = measuredBounds.X end
+                            local contentInset = hasIcon and (iconSlotSize + 17) or 12
+                            local naturalWidth = math.max(48, math.ceil(measuredTextWidth + contentInset))
+                            btn.Size = UDim2.new(0, naturalWidth, 1, 0)
+                            table.insert(actionButtonSizes, {Button = btn, Width = naturalWidth})
 
                             local inner = Instance.new("Frame")
                             inner.BackgroundTransparency = 1
@@ -6869,6 +6896,7 @@ local KEY_ALIASES = {
                             end)
                         end
                     end
+                    task.defer(fitActionButtonSizes)
                 end
                 entry.RefreshActions()
             end
