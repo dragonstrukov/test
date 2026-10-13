@@ -349,12 +349,31 @@ CatalogSection:CreateButton({
 
 -- Separate Browsec / File Market UI. This is independent from the Browse
 -- gallery above and uses the same item/fetch API with build-specific fields.
+local marketModels = {
+    ["Sky Fortress"] = demoPart(Enum.PartType.Block, Color3.fromRGB(114, 135, 162), Vector3.new(4, 1.5, 4)),
+    ["Metal Block"] = demoPart(Enum.PartType.Block, Color3.fromRGB(145, 158, 175), Vector3.new(1, 1, 1)),
+    Glass = demoPart(Enum.PartType.Block, Color3.fromRGB(112, 205, 231), Vector3.new(1, 1, 1)),
+    Thruster = demoPart(Enum.PartType.Cylinder, Color3.fromRGB(255, 132, 78), Vector3.new(1.4, 0.8, 0.8)),
+    Wood = demoPart(Enum.PartType.Block, Color3.fromRGB(153, 105, 65), Vector3.new(1, 1, 1)),
+    ["Roof Tile"] = demoPart(Enum.PartType.Block, Color3.fromRGB(183, 83, 65), Vector3.new(1.3, 0.35, 1)),
+    Door = demoPart(Enum.PartType.Block, Color3.fromRGB(110, 80, 58), Vector3.new(0.7, 2, 0.2)),
+    Frame = demoPart(Enum.PartType.Block, Color3.fromRGB(130, 143, 154), Vector3.new(1.4, 0.5, 1)),
+    Wheel = demoPart(Enum.PartType.Cylinder, Color3.fromRGB(45, 48, 54), Vector3.new(0.5, 1, 1)),
+    Engine = demoPart(Enum.PartType.Cylinder, Color3.fromRGB(132, 140, 151), Vector3.new(1.2, 1.2, 1.2)),
+    Seat = demoPart(Enum.PartType.Block, Color3.fromRGB(70, 91, 112), Vector3.new(1, 0.8, 1)),
+    ["Metal Panel"] = demoPart(Enum.PartType.Block, Color3.fromRGB(165, 174, 184), Vector3.new(1.4, 0.25, 1)),
+}
+
 local FileMarket
 FileMarket = Window:CreateBrowsec({
     Name = "File Market",
     Description = "Community builds and files",
     Width = 920, Height = 620,
     ToggleKey = Enum.KeyCode.M,
+    Icons3D = true,
+    IconSize = 36,
+    Icon3D = { FOV = 38, Angle = Vector3.new(20, -35, 0), Padding = 1.15, Spin = false },
+    Models = marketModels,
     Categories = { "Aircraft", "Buildings", "Vehicles" },
     SortModes = { "Newest", "Most downloaded", "Most popular" },
     Sort = "Most downloaded",
@@ -362,7 +381,8 @@ FileMarket = Window:CreateBrowsec({
         {
             Id = "sky-fortress", Name = "Sky Fortress", Category = "Aircraft",
             Author = "Builder42", Verified = true, Published = "Oct 12, 2026",
-            Image = "rbxassetid://81973586053257", Fit = true, Downloads = 1824, Likes = 96,
+            Image = "rbxassetid://81973586053257", Model = marketModels["Sky Fortress"],
+            Fit = true, Downloads = 1824, Likes = 96,
             BuildValue = 3226, Buildability = 94, BlockCount = 317,
             BlockList = {
                 { Name = "Metal Block", Count = 220, Model = demoPart(Enum.PartType.Block, Color3.fromRGB(145, 158, 175), Vector3.new(1, 1, 1)) },
@@ -414,6 +434,10 @@ FileMarket = Window:CreateBrowsec({
                 Title = "Blocks required for this build",
                 Icon = "blocks",
                 Columns = 2,
+                Icons3D = true,
+                IconSize = 36,
+                Icon3D = { FOV = 38, Angle = Vector3.new(20, -35, 0) },
+                Models = marketModels,
             },
             ShareLink = { Url = item.ViewUrl, Label = "View in 3D in your browser" },
         }

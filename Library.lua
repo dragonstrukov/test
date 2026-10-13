@@ -2764,20 +2764,31 @@ local KEY_ALIASES = {
         if typeof(value) == "Instance" then return value end
         local src = cfg and cfg.Models
         if src == nil then return nil end
-        local key = (type(value) == "string" and value) or text
+        local keys = {}
+        if type(value) == "string" and value ~= "" then table.insert(keys, value) end
+        if type(text) == "string" and text ~= "" and text ~= keys[1] then table.insert(keys, text) end
+        if #keys == 0 then return nil end
         if type(src) == "function" then
-            local ok, res = pcall(src, key, text)
-            if ok and typeof(res) == "Instance" then return res end
-        elseif typeof(src) == "Instance" then
-            local found = src:FindFirstChild(key, true)
-            if found then return found end
-        elseif type(src) == "table" then
-            local found = src[key]
-            if type(found) == "function" then
-                local ok, res = pcall(found, key)
-                found = ok and res or nil
+            for _, key in ipairs(keys) do
+                local ok, res = pcall(src, key, text)
+                if ok and typeof(res) == "Instance" then return res end
             end
-            if typeof(found) == "Instance" then return found end
+        elseif typeof(src) == "Instance" then
+            for _, key in ipairs(keys) do
+                local found = src:FindFirstChild(key, true)
+                if found then return found end
+            end
+        elseif type(src) == "table" then
+            for _, key in ipairs(keys) do
+                local found = src[key]
+                if type(found) == "function" then
+                    local ok, res = pcall(found, key, text)
+                    found = ok and res or nil
+                elseif type(found) == "table" then
+                    found = found.Model or found.Model3D or found.Instance
+                end
+                if typeof(found) == "Instance" then return found end
+            end
         end
         return nil
     end
@@ -2890,11 +2901,11 @@ local KEY_ALIASES = {
     end
 
     -- A fixed-size "icon slot": shows either a lucide icon or (when 3D is on) a viewport
-    local function createIconSlot(parent, slotPx, cfg3, zIndex)
+    local function createIconSlot(parent, slotPx, cfg3, zIndex, xOffset)
         local slot = Instance.new("Frame")
         slot.Name = "IconSlot"
         slot.Size = UDim2.new(0, slotPx, 0, slotPx)
-        slot.Position = UDim2.new(0, 6, 0.5, -slotPx / 2)
+        slot.Position = UDim2.new(0, xOffset == nil and 6 or xOffset, 0.5, -slotPx / 2)
         slot.BackgroundTransparency = 1
         if zIndex then slot.ZIndex = zIndex end
         slot.Visible = false
@@ -2913,12 +2924,15 @@ local KEY_ALIASES = {
 
         function handle:Set(iconName, model, text)
             local inst = cfg3 and resolveModel(model, text, cfg3) or nil
+            local renderedModel = false
             if inst then
                 if not self.Viewport then
                     self.Viewport = createViewportIcon(slot, cfg3, zIndex and (zIndex + 1) or nil)
                 end
-                self.Viewport:SetModel(inst)
-                self.Viewport.Frame.Visible = true
+                renderedModel = self.Viewport:SetModel(inst)
+                self.Viewport.Frame.Visible = renderedModel
+            end
+            if renderedModel then
                 img.Visible = false
                 self.Has = true
             elseif iconName then
@@ -2943,40 +2957,131 @@ local KEY_ALIASES = {
         return handle
     end
 
-    -- Shared icon parsing for API-created buttons. A model/Models source opts
-    -- into a ViewportFrame automatically; a Lucide image remains the fallback.
-    local function buttonIconSpec(def)
+    local function isIconImageSource(value)
+        if type(value) == "number" then return true end
+        if type(value) ~= "string" then return false end
+        local lower = string.lower(value)
+        local extension = string.match(lower, "%.([a-z0-9]+)$")
+        return string.match(lower, "^%d+$") ~= nil or string.match(lower, "^rbx") ~= nil
+            or string.match(lower, "^https?://") ~= nil or string.match(lower, "^data:image/") ~= nil
+            or extension == "png" or extension == "jpg" or extension == "jpeg" or extension == "webp"
+            or extension == "gif" or extension == "bmp" or extension == "avif" or extension == "tif" or extension == "tiff"
+    end
+
+    -- Shared icon parsing for API-created controls. A model/Models source opts
+    -- into a ViewportFrame automatically; a Lucide icon remains the fallback.
+    local function buttonIconSpec(def, inherited)
         if type(def) ~= "table" then return nil, nil, nil end
-        local iconName = def.Icon
+        inherited = inherited or {}
+        local iconDef = type(def.Icon) == "table" and def.Icon or nil
+        local iconName = iconDef and (iconDef.Icon or iconDef.Name or iconDef.Image) or def.Icon
         local model = def.Model or def.Model3D or def.Instance
-        if typeof(iconName) == "Instance" then
-            model, iconName = iconName, nil
+            or (iconDef and (iconDef.Model or iconDef.Model3D or iconDef.Instance))
+        local icon3DValue = def.Icon3D
+        if model == nil then
+            if typeof(icon3DValue) == "Instance" then
+                model = icon3DValue
+            elseif type(icon3DValue) == "table" then
+                model = icon3DValue.Model or icon3DValue.Model3D or icon3DValue.Instance
+            end
         end
-        if model == nil and typeof(def.Icon3D) == "Instance" then
-            model = def.Icon3D
+        if model == nil and iconDef then
+            local nested3D = iconDef.Icon3D
+            if typeof(nested3D) == "Instance" then
+                model = nested3D
+            elseif type(nested3D) == "table" then
+                model = nested3D.Model or nested3D.Model3D or nested3D.Instance
+            end
+        end
+        if typeof(iconName) == "Instance" then
+            model, iconName = model or iconName, nil
         end
 
         local enabled = def.Icons3D
         if enabled == nil then enabled = def["3DIcons"] end
         if enabled == nil then enabled = def.ViewportIcons end
-        if enabled == nil and (model ~= nil or def.Models ~= nil) then enabled = true end
+        if enabled == nil and iconDef then enabled = iconDef.Icons3D end
+        if enabled == nil and iconDef then enabled = iconDef["3DIcons"] end
+        if enabled == nil and iconDef then enabled = iconDef.ViewportIcons end
+        if enabled == nil then enabled = inherited.Icons3D end
+        if enabled == nil then enabled = inherited["3DIcons"] end
+        if enabled == nil then enabled = inherited.ViewportIcons end
+        local nestedIcon3DValue = iconDef and iconDef.Icon3D
+        local icon3DModels = type(icon3DValue) == "table" and icon3DValue.Models or nil
+        if icon3DModels == nil and type(nestedIcon3DValue) == "table" then icon3DModels = nestedIcon3DValue.Models end
+        if icon3DModels == nil and iconDef and type(iconDef.Icons3D) == "table" then icon3DModels = iconDef.Icons3D.Models end
+        if icon3DModels == nil and iconDef and type(iconDef["3DIcons"]) == "table" then icon3DModels = iconDef["3DIcons"].Models end
+        if icon3DModels == nil and iconDef and type(iconDef.ViewportIcons) == "table" then icon3DModels = iconDef.ViewportIcons.Models end
+        if icon3DModels == nil and type(def.Icons3D) == "table" then icon3DModels = def.Icons3D.Models end
+        if icon3DModels == nil and type(def["3DIcons"]) == "table" then icon3DModels = def["3DIcons"].Models end
+        if icon3DModels == nil and type(def.ViewportIcons) == "table" then icon3DModels = def.ViewportIcons.Models end
+        if icon3DModels == nil and type(def.Icon3DConfig) == "table" then icon3DModels = def.Icon3DConfig.Models end
+        if icon3DModels == nil and type(def.Viewport) == "table" then icon3DModels = def.Viewport.Models end
+        if icon3DModels == nil and type(def.IconConfig) == "table" then icon3DModels = def.IconConfig.Models end
+        if icon3DModels == nil and iconDef and type(iconDef.Icon3DConfig) == "table" then icon3DModels = iconDef.Icon3DConfig.Models end
+        if icon3DModels == nil and iconDef and type(iconDef.Viewport) == "table" then icon3DModels = iconDef.Viewport.Models end
+        if icon3DModels == nil and iconDef and type(iconDef.IconConfig) == "table" then icon3DModels = iconDef.IconConfig.Models end
+        if icon3DModels == nil and type(inherited.Icon3D) == "table" then icon3DModels = inherited.Icon3D.Models end
+        if icon3DModels == nil and type(inherited.Icon3DConfig) == "table" then icon3DModels = inherited.Icon3DConfig.Models end
+        if icon3DModels == nil and type(inherited.Viewport) == "table" then icon3DModels = inherited.Viewport.Models end
+        if icon3DModels == nil and type(inherited.Icons3D) == "table" then icon3DModels = inherited.Icons3D.Models end
+        if icon3DModels == nil and type(inherited["3DIcons"]) == "table" then icon3DModels = inherited["3DIcons"].Models end
+        if icon3DModels == nil and type(inherited.ViewportIcons) == "table" then icon3DModels = inherited.ViewportIcons.Models end
+        local models = def.Models or (iconDef and iconDef.Models) or icon3DModels or inherited.Models
+        if model == nil and type(iconName) == "string" and models ~= nil
+            and not (LUCIDE[iconName] or CUSTOM_ICON_DATA[iconName]) and not isIconImageSource(iconName) then
+            model = iconName
+        end
+        if enabled == nil and (model ~= nil or models ~= nil) then enabled = true end
         if enabled == false then return iconName, nil, nil end
 
         local cfg = nil
         if enabled then
             local cfgSource = def.Icon3DConfig or def.Viewport or def.IconConfig
-            if type(def.Icon3D) == "table" or type(def.Icon3D) == "number" then
-                cfgSource = def.Icon3D
+                or (iconDef and (iconDef.Icon3DConfig or iconDef.Viewport or iconDef.IconConfig))
+            if type(icon3DValue) == "table" or type(icon3DValue) == "number" then
+                cfgSource = icon3DValue
+            elseif iconDef and (type(iconDef.Icon3D) == "table" or type(iconDef.Icon3D) == "number") then
+                cfgSource = iconDef.Icon3D
+            elseif cfgSource == nil then
+                cfgSource = inherited.Icon3D or inherited.Icon3DConfig or inherited.Viewport
             end
-            if type(enabled) == "table" or type(enabled) == "number" then
+            if type(enabled) == "table" then
                 cfgSource = enabled
+            elseif type(enabled) == "number" then
+                local merged = {}
+                if type(cfgSource) == "table" then
+                    for key, value in pairs(cfgSource) do merged[key] = value end
+                elseif type(cfgSource) == "number" then
+                    merged.Size = cfgSource
+                end
+                merged.Size = enabled
+                cfgSource = merged
+            elseif type(inherited.Icons3D) == "table" and def.Icons3D == nil then
+                cfgSource = inherited.Icons3D
             end
             cfg = normalize3DConfig(cfgSource, {
-                IconSize = def.IconSize or def.Icon3DSize or def.ViewportSize,
-                Models = def.Models,
+                IconSize = def.IconSize or def.Icon3DSize or def.ViewportSize
+                    or (iconDef and (iconDef.IconSize or iconDef.Size or (type(iconDef.Icon3D) == "number" and iconDef.Icon3D)))
+                    or (type(icon3DValue) == "number" and icon3DValue)
+                    or (type(def.Icons3D) == "number" and def.Icons3D)
+                    or inherited.IconSize,
+                Models = models,
             })
         end
         return iconName, model, cfg
+    end
+
+    local function createModelViewport(parent, modelValue, text, cfg, zIndex)
+        if not cfg then return nil end
+        local model = resolveModel(modelValue, text, cfg)
+        if not model then return nil end
+        local viewport = createViewportIcon(parent, cfg, zIndex)
+        if not viewport:SetModel(model) then
+            viewport:Destroy()
+            return nil
+        end
+        return viewport
     end
 
     -- shared per-dropdown geometry derived from the 3D-icon settings
@@ -4397,7 +4502,7 @@ local KEY_ALIASES = {
         return nil
     end
 
-    local function normalizeBrowseItem(raw, index, defaultFit)
+    local function normalizeBrowseItem(raw, index, defaultFit, sharedModels)
         if type(raw) ~= "table" then return nil end
         if raw.__browseItem then
             if defaultFit and raw.Fit == nil then raw.Fit = true end
@@ -4417,8 +4522,48 @@ local KEY_ALIASES = {
                 if img ~= nil and img ~= "" then table.insert(item.Images, img) end
             end
         end
-        local single = pickField(raw, "Image", "image", "Thumbnail", "thumbnail", "Icon", "icon", "Preview", "preview",
+        item.Icon = pickField(raw, "Icon", "icon")
+        item.Icon3D = pickField(raw, "Icon3D", "icon3d", "Icon3d", "Icon3DConfig", "icon3d_config", "Viewport", "viewport", "ModelConfig", "modelConfig")
+        item.Models = pickField(raw, "Models", "models")
+        item.IconSize = tonumber(pickField(raw, "IconSize", "iconSize", "Icon3DSize", "icon3d_size"))
+        item.Icons3D = pickField(raw, "Icons3D", "icons3d", "3DIcons", "ViewportIcons")
+        item.Model = pickField(raw, "Model", "model", "Model3D", "model3d", "PreviewModel", "previewModel", "Instance", "instance")
+        if type(item.Icon) == "table" then
+            item.Models = item.Models or item.Icon.Models
+            item.Icon3D = item.Icon3D or item.Icon.Icon3D or item.Icon.Icon3DConfig or item.Icon.Viewport
+            item.IconSize = item.IconSize or tonumber(item.Icon.IconSize or item.Icon.Size)
+            if item.Icons3D == nil then
+                item.Icons3D = item.Icon.Icons3D
+                if item.Icons3D == nil then item.Icons3D = item.Icon["3DIcons"] end
+                if item.Icons3D == nil then item.Icons3D = item.Icon.ViewportIcons end
+            end
+        end
+        if item.Model == nil and typeof(item.Icon) == "Instance" then item.Model = item.Icon end
+        if item.Model == nil and typeof(item.Icon3D) == "Instance" then item.Model = item.Icon3D end
+        if item.Model == nil and type(item.Icon) == "table" then
+            item.Model = item.Icon.Model or item.Icon.Model3D or item.Icon.Instance
+            item.Icon3D = item.Icon3D or item.Icon.Icon3D
+        end
+        if item.Model == nil and type(item.Icon3D) == "table" then
+            item.Model = item.Icon3D.Model or item.Icon3D.Model3D or item.Icon3D.Instance
+        end
+        local iconName = type(item.Icon) == "table" and (item.Icon.Name or item.Icon.Icon) or item.Icon
+        if type(iconName) == "string" and (LUCIDE[iconName] or CUSTOM_ICON_DATA[iconName]) then
+            item.IconName = iconName
+        end
+        local single = pickField(raw, "Image", "image", "Thumbnail", "thumbnail", "Preview", "preview",
             "thumbUrl", "thumb_url", "thumbnail_url", "image_url", "coverUrl", "cover_url", "ImageUrl", "imageUrl")
+        if single == nil and item.Model == nil and item.IconName == nil then
+            if type(item.Icon) == "number" then
+                single = item.Icon
+            elseif type(item.Icon) == "string" then
+                if isIconImageSource(item.Icon) or (item.Models == nil and sharedModels == nil) then
+                    single = item.Icon
+                end
+            elseif type(item.Icon) == "table" then
+                single = item.Icon.Image or item.Icon.Url or item.Icon.Source
+            end
+        end
         if single ~= nil and single ~= "" and #item.Images == 0 then
             table.insert(item.Images, single)
         end
@@ -4579,6 +4724,20 @@ local KEY_ALIASES = {
         local maxHeight = math.max(180, (viewport.Y - widthMargin * 2) / math.max(dialogScale, 0.01))
         local width = math.min(tonumber(dOpts.Width) or DIALOG_W, maxWidth)
         local resizable = dOpts.Resizable ~= false
+        local dialogIcons3D = dOpts.Icons3D
+        if dialogIcons3D == nil then dialogIcons3D = dOpts["3DIcons"] end
+        local dialogIconDefaults = {
+            Icons3D = dialogIcons3D,
+            Icon3D = dOpts.Icon3DConfig or dOpts.Viewport,
+            IconSize = dOpts.IconSize or dOpts.Icon3DSize,
+            Models = dOpts.Models,
+        }
+        if type(dOpts.Icon3D) == "table" or type(dOpts.Icon3D) == "number" then
+            dialogIconDefaults.Icon3D = dOpts.Icon3D
+        end
+        local function isDialogImageSource(value)
+            return isIconImageSource(value)
+        end
         local boxBottomPadding = 12
         local gripSize = mobileDialog and 28 or 18
         -- The grip is unscaled in the dialog ScreenGui; convert its clearance
@@ -4688,7 +4847,9 @@ local KEY_ALIASES = {
             title.Size = UDim2.new(1, -(headerRight.AbsoluteSize.X / math.max(dialogScale, 0.01) + 8), 1, 0)
         end)
 
-        local function smallPill(parent, text, orderIdx)
+        local function smallPill(parent, rawDef, orderIdx)
+            local def = type(rawDef) == "table" and rawDef or {Text = rawDef}
+            local text = dialogTextOf(def)
             local btn = Instance.new("TextButton")
             btn.Size = UDim2.new(0, 0, 0, 22)
             btn.AutomaticSize = Enum.AutomaticSize.X
@@ -4705,9 +4866,29 @@ local KEY_ALIASES = {
             p.PaddingLeft = UDim.new(0, 9)
             p.PaddingRight = UDim.new(0, 9)
             p.Parent = btn
+            local content = Instance.new("UIListLayout")
+            content.FillDirection = Enum.FillDirection.Horizontal
+            content.SortOrder = Enum.SortOrder.LayoutOrder
+            content.VerticalAlignment = Enum.VerticalAlignment.Center
+            content.Padding = UDim.new(0, 4)
+            content.Parent = btn
+            local iconName, iconModel, iconConfig = buttonIconSpec(def, dialogIconDefaults)
+            local iconSize = iconConfig and math.clamp(iconConfig.Size, 12, 16) or 12
+            local hasIcon = false
+            if iconName or iconModel or iconConfig then
+                local iconSlot = createIconSlot(btn, iconSize, iconConfig, 153, 0)
+                iconSlot.Frame.LayoutOrder = 1
+                hasIcon = iconSlot:Set(iconName, iconModel, text)
+                if hasIcon then
+                    iconSlot:Tint("TextPrimary")
+                else
+                    iconSlot.Frame:Destroy()
+                end
+            end
             local lbl = Instance.new("TextLabel")
             lbl.Size = UDim2.new(0, 0, 1, 0)
             lbl.AutomaticSize = Enum.AutomaticSize.X
+            lbl.LayoutOrder = hasIcon and 2 or 1
             lbl.BackgroundTransparency = 1
             lbl.Text = text
             lbl.Font = Enum.Font.GothamMedium
@@ -4723,7 +4904,7 @@ local KEY_ALIASES = {
         local headerIdx = 0
         for _, def in ipairs(dOpts.HeaderButtons or {}) do
             headerIdx = headerIdx + 1
-            local btn = smallPill(headerRight, dialogTextOf(def), headerIdx)
+            local btn = smallPill(headerRight, def, headerIdx)
             btn.MouseButton1Click:Connect(function()
                 if type(def) == "table" and def.Callback then task.spawn(def.Callback, handle) end
                 if type(def) == "table" and def.Close then handle.Close() end
@@ -4838,7 +5019,7 @@ local KEY_ALIASES = {
             end
         end
 
-        -- Images ------------------------------------------------------------------
+        -- Images and optional 3D preview models -----------------------------------
         local images = {}
         if type(dOpts.Images) == "table" then
             for _, src in ipairs(dOpts.Images) do
@@ -4846,6 +5027,24 @@ local KEY_ALIASES = {
             end
         elseif dOpts.Image ~= nil and dOpts.Image ~= "" then
             images[1] = dOpts.Image
+        end
+        local heroDef = {
+            Icon = dOpts.Icon,
+            Model = dOpts.Model or dOpts.Model3D or dOpts.Instance,
+            Icon3D = dOpts.Icon3D,
+            Icon3DConfig = dOpts.Icon3DConfig,
+            Models = dOpts.Models,
+            Icons3D = dialogIcons3D,
+            IconSize = dOpts.IconSize or dOpts.Icon3DSize,
+        }
+        local heroIcon, heroModelValue, heroConfig = buttonIconSpec(heroDef, dialogIconDefaults)
+        local heroName = tostring(dOpts.ModelName or dOpts.Title or dOpts.Name or "Dialog")
+        local heroModel = heroConfig and resolveModel(heroModelValue, heroName, heroConfig) or nil
+        if heroModel then
+            table.insert(images, 1, {Model = heroModel, Icon3D = heroConfig, Name = heroName})
+        elseif #images == 0 and heroIcon then
+            local isLucideIcon = type(heroIcon) == "string" and (LUCIDE[heroIcon] or CUSTOM_ICON_DATA[heroIcon])
+            images[1] = isLucideIcon and {Icon = heroIcon} or heroIcon
         end
 
         local tagLabel, badgeLabel
@@ -4871,35 +5070,80 @@ local KEY_ALIASES = {
             for i = 1, count do
                 local c = (i - 1) % cols
                 local r = math.floor((i - 1) / cols)
-                local img = Instance.new("ImageLabel")
-                img.BackgroundTransparency = 1
-                img.ScaleType = dOpts.Fit and Enum.ScaleType.Fit or Enum.ScaleType.Crop
-                if dOpts.Fit then
-                    img.Size = UDim2.new(1 / cols, -24, 1 / rows, -24)
-                    img.Position = UDim2.new(c / cols, 12, r / rows, 12)
-                else
-                    img.Size = UDim2.new(1 / cols, (cols > 1) and -1 or 0, 1 / rows, (rows > 1) and -1 or 0)
-                    img.Position = UDim2.new(c / cols, (c > 0) and 1 or 0, r / rows, (r > 0) and 1 or 0)
-                end
-                img.ZIndex = 152
-                img.Parent = area
                 local src = images[i]
-                if dOpts.ImageLoader or (type(src) == "string" and string.match(src, "^https?://")) then
-                    task.spawn(function()
-                        local asset
-                        if dOpts.ImageLoader then
-                            local ok, res = pcall(dOpts.ImageLoader, src)
-                            asset = (ok and type(res) == "string") and res or nil
-                        end
-                        if not asset then asset = resolveBrowseImage(src) end
-                        if img.Parent and asset then img.Image = asset end
-                    end)
+                local previewDef = type(src) == "table" and src or (typeof(src) == "Instance" and {Model = src}) or {Icon = src}
+                local iconName, modelValue, iconConfig = buttonIconSpec(previewDef, dialogIconDefaults)
+                local previewName = tostring(previewDef.Name or previewDef.Text or heroName)
+                local imageSource = previewDef.Image or previewDef.image or previewDef.Thumbnail or previewDef.thumbnail
+                    or previewDef.Url or previewDef.URL or previewDef.Source
+                if imageSource == nil and type(previewDef.Icon) == "string" and isDialogImageSource(previewDef.Icon) then
+                    imageSource = previewDef.Icon
+                end
+                if imageSource == nil and type(src) ~= "table" and isDialogImageSource(src) then imageSource = src end
+                local size, position
+                if dOpts.Fit then
+                    size = UDim2.new(1 / cols, -24, 1 / rows, -24)
+                    position = UDim2.new(c / cols, 12, r / rows, 12)
                 else
-                    img.Image = resolveBrowseImage(src)
+                    size = UDim2.new(1 / cols, (cols > 1) and -1 or 0, 1 / rows, (rows > 1) and -1 or 0)
+                    position = UDim2.new(c / cols, (c > 0) and 1 or 0, r / rows, (r > 0) and 1 or 0)
+                end
+                local hasModelPreview = false
+                if iconConfig and (modelValue ~= nil or iconConfig.Models ~= nil) then
+                    local slot = Instance.new("Frame")
+                    slot.Name = "Preview3D"
+                    slot.Size = size
+                    slot.Position = position
+                    slot.BackgroundTransparency = 1
+                    slot.ClipsDescendants = true
+                    slot.ZIndex = 152
+                    slot.Parent = area
+                    if createModelViewport(slot, modelValue, previewName, iconConfig, 153) then
+                        hasModelPreview = true
+                    else
+                        slot:Destroy()
+                    end
+                end
+                if not hasModelPreview and imageSource == nil and type(src) == "string"
+                    and not (LUCIDE[src] or CUSTOM_ICON_DATA[src]) then
+                    imageSource = src
+                end
+                if not hasModelPreview and imageSource ~= nil then
+                    local img = Instance.new("ImageLabel")
+                    img.BackgroundTransparency = 1
+                    img.Size = size
+                    img.Position = position
+                    img.ScaleType = dOpts.Fit and Enum.ScaleType.Fit or Enum.ScaleType.Crop
+                    img.ZIndex = 152
+                    img.Parent = area
+                    local loader = previewDef.ImageLoader or dOpts.ImageLoader
+                    if loader or (type(imageSource) == "string" and string.match(imageSource, "^https?://")) then
+                        task.spawn(function()
+                            local asset
+                            if type(loader) == "function" then
+                                local ok, res = pcall(loader, imageSource, dOpts.Data, previewDef)
+                                asset = (ok and type(res) == "string") and res or nil
+                            end
+                            if not asset then asset = resolveBrowseImage(imageSource) end
+                            if img.Parent and asset then img.Image = asset end
+                        end)
+                    else
+                        img.Image = resolveBrowseImage(imageSource)
+                    end
+                elseif not hasModelPreview and iconName and not isDialogImageSource(iconName) then
+                    local img = Instance.new("ImageLabel")
+                    img.AnchorPoint = Vector2.new(0.5, 0.5)
+                    img.Size = UDim2.new(0, 24, 0, 24)
+                    img.Position = UDim2.new(c / cols + 0.5 / cols, 0, r / rows + 0.5 / rows, 0)
+                    img.BackgroundTransparency = 1
+                    img.Image = resolveIcon(iconName)
+                    tintIcon(img, iconName, previewDef.Color or "TextMuted")
+                    img.ZIndex = 152
+                    img.Parent = area
                 end
             end
 
-            local function overlayPill(anchorX, text, colorKey, iconName)
+            local function overlayPill(anchorX, text, colorKey, iconDef)
                 local pill = Instance.new("Frame")
                 pill.Size = UDim2.new(0, 0, 0, 20)
                 pill.AutomaticSize = Enum.AutomaticSize.X
@@ -4922,20 +5166,24 @@ local KEY_ALIASES = {
                 content.VerticalAlignment = Enum.VerticalAlignment.Center
                 content.Padding = UDim.new(0, 4)
                 content.Parent = pill
-                if iconName then
-                    local icon = Instance.new("ImageLabel")
-                    icon.Size = UDim2.new(0, 12, 0, 12)
-                    icon.LayoutOrder = 1
-                    icon.BackgroundTransparency = 1
-                    icon.Image = resolveIcon(iconName)
-                    tintIcon(icon, iconName, colorKey)
-                    icon.ZIndex = 154
-                    icon.Parent = pill
+                local hasIcon = false
+                if iconDef ~= nil then
+                    local iconOptions = type(iconDef) == "table" and iconDef or {Icon = iconDef}
+                    local iconName, iconModel, iconConfig = buttonIconSpec(iconOptions, dialogIconDefaults)
+                    local iconSize = iconConfig and math.clamp(iconConfig.Size, 12, 16) or 12
+                    local iconSlot = createIconSlot(pill, iconSize, iconConfig, 154, 0)
+                    iconSlot.Frame.LayoutOrder = 1
+                    hasIcon = iconSlot:Set(iconName, iconModel, tostring(text or ""))
+                    if hasIcon then
+                        iconSlot:Tint(colorKey)
+                    else
+                        iconSlot.Frame:Destroy()
+                    end
                 end
                 local lbl = Instance.new("TextLabel")
                 lbl.Size = UDim2.new(0, 0, 1, 0)
                 lbl.AutomaticSize = Enum.AutomaticSize.X
-                lbl.LayoutOrder = 2
+                lbl.LayoutOrder = hasIcon and 2 or 1
                 lbl.BackgroundTransparency = 1
                 lbl.Text = text or ""
                 lbl.RichText = true
@@ -4970,7 +5218,6 @@ local KEY_ALIASES = {
             if type(lines) == "string" then lines = {lines} end
             for i, def in ipairs(lines or {}) do
                 local text = dialogTextOf(def)
-                local iconName = type(def) == "table" and def.Icon or nil
                 local colorKey = type(def) == "table" and def.Color or "TextMuted"
                 local row = Instance.new("Frame")
                 row.Size = UDim2.new(1, 0, 0, 16)
@@ -4979,16 +5226,15 @@ local KEY_ALIASES = {
                 row.ZIndex = 151
                 row.Parent = linesHolder
                 local inset = 0
-                if iconName then
-                    local ic = Instance.new("ImageLabel")
-                    ic.Size = UDim2.new(0, 12, 0, 12)
-                    ic.Position = UDim2.new(0, 0, 0.5, -6)
-                    ic.BackgroundTransparency = 1
-                    ic.Image = resolveIcon(iconName)
-                    tintIcon(ic, iconName, colorKey)
-                    ic.ZIndex = 152
-                    ic.Parent = row
-                    inset = 17
+                local iconDef = type(def) == "table" and def or {}
+                local iconName, iconModel, iconConfig = buttonIconSpec(iconDef, dialogIconDefaults)
+                local iconSize = iconConfig and math.clamp(iconConfig.Size, 12, 16) or 12
+                if iconName or iconModel or iconConfig then
+                    local iconSlot = createIconSlot(row, iconSize, iconConfig, 152, 0)
+                    if iconSlot:Set(iconName, iconModel, text) then
+                        iconSlot:Tint(colorKey)
+                        inset = iconSize + 5
+                    end
                 end
                 local lbl = Instance.new("TextLabel")
                 lbl.Size = UDim2.new(1, -inset, 1, 0)
@@ -5047,7 +5293,7 @@ local KEY_ALIASES = {
             end
             bindColor(btn, "BackgroundColor3", bgKey)
 
-            local iconName, iconModel, iconConfig = buttonIconSpec(def)
+            local iconName, iconModel, iconConfig = buttonIconSpec(def, dialogIconDefaults)
             local iconSlotSize = iconConfig and math.clamp(iconConfig.Size, 18, 24) or 16
             local iconSlot = createIconSlot(btn, iconSlotSize, iconConfig, 153)
             local hasIcon = iconSlot:Set(iconName, iconModel, dialogTextOf(def))
@@ -5150,17 +5396,15 @@ local KEY_ALIASES = {
                 card.Parent = row
                 addCorner(card, 7)
                 addStroke(card, 1)
-                local iconName = def.Icon
-                local inset = iconName and 27 or 8
-                if iconName then
-                    local icon = Instance.new("ImageLabel")
-                    icon.Size = UDim2.new(0, 13, 0, 13)
-                    icon.Position = UDim2.new(0, 8, 0.5, -6.5)
-                    icon.BackgroundTransparency = 1
-                    icon.Image = resolveIcon(iconName)
-                    tintIcon(icon, iconName, def.Color or "Accent")
-                    icon.ZIndex = 153
-                    icon.Parent = card
+                local iconName, iconModel, iconConfig = buttonIconSpec(def, dialogIconDefaults)
+                local iconSize = iconConfig and math.clamp(iconConfig.Size, 13, 18) or 13
+                local inset = 8
+                if iconName or iconModel or iconConfig then
+                    local iconSlot = createIconSlot(card, iconSize, iconConfig, 153, 8)
+                    if iconSlot:Set(iconName, iconModel, tostring(def.Label or def.Name or "")) then
+                        iconSlot:Tint(def.Color or "Accent")
+                        inset = iconSize + 11
+                    end
                 end
                 local valueLabel = Instance.new("TextLabel")
                 valueLabel.Size = UDim2.new(1, -inset - 4, 0, 17)
@@ -5202,10 +5446,20 @@ local KEY_ALIASES = {
             frame.BackgroundTransparency = 1
             frame.ZIndex = 152
             frame.Parent = parent
+            local titleText = tostring(def.Label or def.Title or "Buildability")
+            local iconName, iconModel, iconConfig = buttonIconSpec(def, dialogIconDefaults)
+            local iconSize = iconConfig and math.clamp(iconConfig.Size, 12, 16) or 12
+            local hasIcon = false
+            if iconName or iconModel or iconConfig then
+                local iconSlot = createIconSlot(frame, iconSize, iconConfig, 153, 0)
+                hasIcon = iconSlot:Set(iconName, iconModel, titleText)
+                if hasIcon then iconSlot:Tint(def.Color or "TextMuted") end
+            end
             local title = Instance.new("TextLabel")
-            title.Size = UDim2.new(1, -46, 0, 15)
+            title.Size = UDim2.new(1, -(46 + (hasIcon and iconSize + 5 or 0)), 0, 15)
+            title.Position = UDim2.new(0, hasIcon and iconSize + 5 or 0, 0, 0)
             title.BackgroundTransparency = 1
-            title.Text = tostring(def.Label or def.Title or "Buildability")
+            title.Text = titleText
             title.Font = Enum.Font.GothamMedium
             title.TextSize = 10
             title.TextXAlignment = Enum.TextXAlignment.Left
@@ -5267,12 +5521,25 @@ local KEY_ALIASES = {
                 list = blocks.Blocks
                 explicitCount = tonumber(blocks.Count or blocks.Total)
             elseif type(blocks) == "table" then
-                list = blocks
+                if blocks.Name or blocks.name or blocks.Type or blocks.type or blocks.Id or blocks.id then
+                    list = {blocks}
+                else
+                    list = blocks
+                end
             else
                 title = "Blocks"
                 list = nil
             end
             if type(list) ~= "table" then list = nil end
+            local blockIcons3D
+            if type(blocks) == "table" then blockIcons3D = blocks.Icons3D end
+            if blockIcons3D == nil then blockIcons3D = dialogIcons3D end
+            local blockIconDefaults = {
+                Icons3D = blockIcons3D,
+                Icon3D = (type(blocks) == "table" and (blocks.Icon3D or blocks.Icon3DConfig)) or dOpts.BlockIcon3D or dialogIconDefaults.Icon3D,
+                IconSize = (type(blocks) == "table" and blocks.IconSize) or dOpts.BlockIconSize or dialogIconDefaults.IconSize or 16,
+                Models = (type(blocks) == "table" and blocks.Models) or dOpts.BlockModels or dialogIconDefaults.Models,
+            }
             local count = explicitCount or (type(list) == "table" and #list or tonumber(blocks))
             local heading = tostring(title or "Blocks") .. (count and (" · " .. dialogCompactCount(count)) or "")
             local section = Instance.new("Frame")
@@ -5313,21 +5580,96 @@ local KEY_ALIASES = {
                     more.Parent = section
                     break
                 end
-                local block = type(raw) == "table" and raw or {Name = tostring(raw)}
-                local line = Instance.new("TextLabel")
-                line.Size = UDim2.new(1, 0, 0, 13)
+                local block
+                if typeof(raw) == "Instance" then
+                    block = {Name = raw.Name, Model = raw}
+                elseif type(raw) == "table" then
+                    block = raw
+                else
+                    block = {Name = tostring(raw)}
+                end
+                local name = tostring(block.Name or block.name or block.Type or block.type or block.Id or block.id or raw)
+                local amount = tonumber(block.Count or block.count or block.Amount or block.amount or block.Quantity or block.quantity)
+                local itemIconDefaults = {
+                    Icons3D = blockIconDefaults.Icons3D,
+                    Icon3D = block.Icon3D or block.Viewport or blockIconDefaults.Icon3D,
+                    IconSize = block.IconSize or blockIconDefaults.IconSize,
+                    Models = block.Models or blockIconDefaults.Models,
+                }
+                local iconSpec = {
+                    Icon = block.Icon or block.icon or block.IconName or block.icon_name,
+                    Model = block.Model or block.Model3D or block.model or block.model3d or block.Instance,
+                    Icon3D = block.Icon3D or block.icon3d,
+                    Icon3DConfig = block.Icon3DConfig or block.ModelConfig,
+                    Viewport = block.Viewport,
+                    IconSize = block.IconSize or block.iconSize,
+                    Models = block.Models or block.models,
+                }
+                if block.Icons3D ~= nil then iconSpec.Icons3D = block.Icons3D end
+                local iconName, modelValue, iconConfig = buttonIconSpec(iconSpec, itemIconDefaults)
+                if modelValue == nil and type(iconName) == "string" and blockIconDefaults.Models
+                    and not (LUCIDE[iconName] or CUSTOM_ICON_DATA[iconName]) and not isDialogImageSource(iconName) then
+                    modelValue = iconName
+                end
+                local imageSource = block.Image or block.image or block.Thumbnail or block.thumbnail or block.Texture or block.texture
+                if imageSource == nil and isDialogImageSource(iconName) then
+                    imageSource, iconName = iconName, nil
+                end
+                local line = Instance.new("Frame")
+                line.Size = UDim2.new(1, 0, 0, 18)
                 line.LayoutOrder = i + 1
                 line.BackgroundTransparency = 1
-                local name = tostring(block.Name or block.name or block.Type or block.type or block.Id or block.id or raw)
-                local amount = tonumber(block.Count or block.count or block.Amount or block.amount)
-                line.Text = "• " .. name .. (amount and (" × " .. dialogCompactCount(amount)) or "")
-                line.Font = Enum.Font.Gotham
-                line.TextSize = 8.5
-                line.TextXAlignment = Enum.TextXAlignment.Left
-                line.TextTruncate = Enum.TextTruncate.AtEnd
-                bindColor(line, "TextColor3", "TextMuted")
                 line.ZIndex = 153
                 line.Parent = section
+                local inset = 0
+                if iconName or modelValue or iconConfig then
+                    local iconSize = math.clamp(tonumber(block.IconSize or blockIconDefaults.IconSize) or 16, 12, 20)
+                    local iconSlot = createIconSlot(line, iconSize, iconConfig, 154, 0)
+                    if iconSlot:Set(iconName, modelValue, name) then
+                        iconSlot:Tint(block.Color or "TextMuted")
+                        inset = iconSize + 5
+                    end
+                end
+                if inset == 0 and imageSource ~= nil and imageSource ~= "" then
+                    local icon = Instance.new("ImageLabel")
+                    icon.Size = UDim2.new(0, 16, 0, 16)
+                    icon.Position = UDim2.new(0, 0, 0.5, -8)
+                    icon.BackgroundTransparency = 1
+                    icon.ScaleType = Enum.ScaleType.Fit
+                    icon.ZIndex = 154
+                    icon.Parent = line
+                    local imageLoader = type(block.ImageLoader) == "function" and block.ImageLoader
+                        or (type(dOpts.ImageLoader) == "function" and dOpts.ImageLoader or nil)
+                    local immediate = imageLoader == nil
+                        and not (type(imageSource) == "string" and string.match(imageSource, "^https?://"))
+                        and resolveBrowseImage(imageSource) or nil
+                    if immediate then
+                        icon.Image = immediate
+                    else
+                        task.spawn(function()
+                            local asset
+                            if imageLoader then
+                                local ok, result = pcall(imageLoader, imageSource, block, blocks)
+                                if ok and type(result) == "string" then asset = result end
+                            end
+                            if not asset then asset = resolveBrowseImage(imageSource) end
+                            if icon.Parent and asset then icon.Image = asset end
+                        end)
+                    end
+                    inset = 21
+                end
+                local label = Instance.new("TextLabel")
+                label.Size = UDim2.new(1, -inset, 1, 0)
+                label.Position = UDim2.new(0, inset, 0, 0)
+                label.BackgroundTransparency = 1
+                label.Text = (inset > 0 and "" or "• ") .. name .. (amount and (" × " .. dialogCompactCount(amount)) or "")
+                label.Font = Enum.Font.Gotham
+                label.TextSize = 8.5
+                label.TextXAlignment = Enum.TextXAlignment.Left
+                label.TextTruncate = Enum.TextTruncate.AtEnd
+                bindColor(label, "TextColor3", "TextMuted")
+                label.ZIndex = 154
+                label.Parent = line
             end
             return section
         end
@@ -5342,16 +5684,33 @@ local KEY_ALIASES = {
             frame.BackgroundTransparency = 1
             frame.ZIndex = 152
             frame.Parent = parent
+            local titleRow = Instance.new("Frame")
+            titleRow.Size = UDim2.new(1, 0, 0, 13)
+            titleRow.BackgroundTransparency = 1
+            titleRow.ZIndex = 153
+            titleRow.Parent = frame
+            local titleText = tostring(def.Label or def.Title or "View in 3D in your browser")
+            local iconName, iconModel, iconConfig = buttonIconSpec(def, dialogIconDefaults)
+            local iconSize = iconConfig and math.clamp(iconConfig.Size, 12, 16) or 12
+            local inset = 0
+            if iconName or iconModel or iconConfig then
+                local iconSlot = createIconSlot(titleRow, iconSize, iconConfig, 154, 0)
+                if iconSlot:Set(iconName, iconModel, titleText) then
+                    iconSlot:Tint(def.Color or "TextMuted")
+                    inset = iconSize + 5
+                end
+            end
             local label = Instance.new("TextLabel")
-            label.Size = UDim2.new(1, 0, 0, 13)
+            label.Size = UDim2.new(1, -inset, 1, 0)
+            label.Position = UDim2.new(0, inset, 0, 0)
             label.BackgroundTransparency = 1
-            label.Text = tostring(def.Label or "View in 3D in your browser")
+            label.Text = titleText
             label.Font = Enum.Font.GothamMedium
             label.TextSize = 9.5
             label.TextXAlignment = Enum.TextXAlignment.Left
             bindColor(label, "TextColor3", "TextMuted")
-            label.ZIndex = 153
-            label.Parent = frame
+            label.ZIndex = 154
+            label.Parent = titleRow
             local box = Instance.new("Frame")
             box.Size = UDim2.new(1, -64, 0, 27)
             box.Position = UDim2.new(0, 0, 0, 17)
@@ -5414,17 +5773,15 @@ local KEY_ALIASES = {
             row.BackgroundTransparency = 1
             row.ZIndex = 152
             row.Parent = parent
-            local iconName = def.Icon
-            local inset = iconName and 18 or 0
-            if iconName then
-                local icon = Instance.new("ImageLabel")
-                icon.Size = UDim2.new(0, 12, 0, 12)
-                icon.Position = UDim2.new(0, 0, 0.5, -6)
-                icon.BackgroundTransparency = 1
-                icon.Image = resolveIcon(iconName)
-                tintIcon(icon, iconName, def.Color or "TextMuted")
-                icon.ZIndex = 153
-                icon.Parent = row
+            local iconName, iconModel, iconConfig = buttonIconSpec(def, dialogIconDefaults)
+            local iconSize = iconConfig and math.clamp(iconConfig.Size, 12, 16) or 12
+            local inset = 0
+            if iconName or iconModel or iconConfig then
+                local iconSlot = createIconSlot(row, iconSize, iconConfig, 153, 0)
+                if iconSlot:Set(iconName, iconModel, tostring(def.Text or def.Title or "")) then
+                    iconSlot:Tint(def.Color or "TextMuted")
+                    inset = iconSize + 5
+                end
             end
             local label = Instance.new("TextLabel")
             label.Size = UDim2.new(1, -inset, 1, 0)
@@ -5459,6 +5816,17 @@ local KEY_ALIASES = {
                 end
             elseif rawList ~= nil then
                 blocks = {rawList}
+            end
+            local gridIcons3D = def.Icons3D
+            if gridIcons3D == nil then gridIcons3D = dialogIcons3D end
+            local gridIconDefaults = {
+                Icons3D = gridIcons3D,
+                Icon3D = def.Icon3DConfig or def.Viewport or def.ModelConfig or dialogIconDefaults.Icon3D,
+                IconSize = def.IconSize or dialogIconDefaults.IconSize or 40,
+                Models = def.Models or dialogIconDefaults.Models,
+            }
+            if type(def.Icon3D) == "table" or type(def.Icon3D) == "number" then
+                gridIconDefaults.Icon3D = def.Icon3D
             end
 
             local empty = #blocks == 0
@@ -5522,18 +5890,11 @@ local KEY_ALIASES = {
             scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateGridSize)
             gridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateGridSize)
 
-            local function isImageSource(value)
-                if type(value) ~= "string" then return false end
-                local lower = string.lower(value)
-                return string.find(lower, "^rbxassetid://") ~= nil
-                    or string.find(lower, "^rbxasset://") ~= nil
-                    or string.find(lower, "^rbxthumb://") ~= nil
-                    or string.find(lower, "^https?://") ~= nil
-            end
-
             local function loadBlockImage(image, source, block)
                 if source == nil or source == "" then return end
-                local immediate = (def.ImageLoader == nil and not (type(source) == "string" and string.match(source, "^https?://")))
+                local imageLoader = type(def.ImageLoader) == "function" and def.ImageLoader
+                    or (type(dOpts.ImageLoader) == "function" and dOpts.ImageLoader or nil)
+                local immediate = (imageLoader == nil and not (type(source) == "string" and string.match(source, "^https?://")))
                     and resolveBrowseImage(source) or nil
                 if immediate then
                     image.Image = immediate
@@ -5541,8 +5902,8 @@ local KEY_ALIASES = {
                 end
                 task.spawn(function()
                     local asset
-                    if type(def.ImageLoader) == "function" then
-                        local ok, result = pcall(def.ImageLoader, source, block, def)
+                    if imageLoader then
+                        local ok, result = pcall(imageLoader, source, block, def)
                         if ok and type(result) == "string" then asset = result end
                     end
                     if not asset then asset = resolveBrowseImage(source) end
@@ -5568,26 +5929,40 @@ local KEY_ALIASES = {
                 if typeof(rawIcon) == "Instance" then
                     modelValue = modelValue or rawIcon
                     rawIcon = nil
+                elseif type(rawIcon) == "table" then
+                    modelValue = modelValue or rawIcon.Model or rawIcon.Model3D or rawIcon.Instance
+                    imageSource = imageSource or rawIcon.Image or rawIcon.image or rawIcon.Thumbnail or rawIcon.Url
+                    iconName = rawIcon.Icon or rawIcon.Name
                 elseif type(rawIcon) == "string" then
                     if LUCIDE[rawIcon] or CUSTOM_ICON_DATA[rawIcon] then
                         iconName = rawIcon
-                    elseif imageSource == nil and isImageSource(rawIcon) then
-                        imageSource = rawIcon
+                    elseif isDialogImageSource(rawIcon) then
+                        imageSource = imageSource or rawIcon
+                    elseif gridIconDefaults.Models ~= nil then
+                        modelValue = modelValue or rawIcon
                     end
+                elseif type(rawIcon) == "number" then
+                    imageSource = imageSource or rawIcon
                 end
-                if modelValue == nil and typeof(block.Icon3D) == "Instance" then
-                    modelValue = block.Icon3D
+                local iconSpec = {
+                    Icon = type(rawIcon) == "table" and rawIcon or iconName,
+                    Model = modelValue,
+                    Icon3D = block.Icon3D or block.icon3d,
+                    Icon3DConfig = block.Icon3DConfig or block.icon3DConfig,
+                    Viewport = block.Viewport,
+                    IconSize = block.IconSize or block.iconSize,
+                    Models = block.Models or block.models,
+                }
+                if block.Icons3D ~= nil then iconSpec.Icons3D = block.Icons3D end
+                if iconSpec.Models == nil and gridIconDefaults.Models ~= nil then iconSpec.Models = gridIconDefaults.Models end
+                if iconSpec.IconSize == nil then iconSpec.IconSize = gridIconDefaults.IconSize end
+                local parsedIcon, parsedModel, modelConfig = buttonIconSpec(iconSpec, gridIconDefaults)
+                iconName = parsedIcon
+                modelValue = parsedModel or modelValue
+                if imageSource == nil and isDialogImageSource(iconName) then
+                    imageSource, iconName = iconName, nil
                 end
-                local iconConfig = block.Icon3D
-                if typeof(iconConfig) == "Instance" then iconConfig = nil end
-                if type(iconConfig) ~= "table" and type(iconConfig) ~= "number" then
-                    iconConfig = block.Viewport or block.ModelConfig or def.Icon3D or def.ModelConfig
-                end
-                local modelConfig = normalize3DConfig(iconConfig, {
-                    IconSize = block.IconSize or def.IconSize or 40,
-                    Models = block.Models or def.Models,
-                })
-                local resolvedModel = resolveModel(modelValue, name, modelConfig)
+                local resolvedModel = modelConfig and resolveModel(modelValue, name, modelConfig) or nil
 
                 local card = Instance.new("Frame")
                 card.Name = "BlockItem"
@@ -5609,10 +5984,9 @@ local KEY_ALIASES = {
                 iconBox.Parent = card
                 addCorner(iconBox, 7)
 
-                if resolvedModel then
-                    local viewportIcon = createViewportIcon(iconBox, modelConfig, 155)
-                    viewportIcon:SetModel(resolvedModel)
-                elseif imageSource ~= nil and imageSource ~= "" then
+                local hasModelPreview = resolvedModel ~= nil
+                    and createModelViewport(iconBox, modelValue, name, modelConfig, 155) ~= nil
+                if not hasModelPreview and imageSource ~= nil and imageSource ~= "" then
                     local image = Instance.new("ImageLabel")
                     image.Size = UDim2.new(1, -6, 1, -6)
                     image.Position = UDim2.new(0, 3, 0, 3)
@@ -5621,7 +5995,7 @@ local KEY_ALIASES = {
                     image.ZIndex = 155
                     image.Parent = iconBox
                     loadBlockImage(image, imageSource, block)
-                else
+                elseif not hasModelPreview then
                     local fallbackIcon = iconName or "box"
                     local icon = Instance.new("ImageLabel")
                     icon.Size = UDim2.new(0, 20, 0, 20)
@@ -5666,6 +6040,12 @@ local KEY_ALIASES = {
         local function renderBlocksButton(parent, rawDef)
             if rawDef == nil or rawDef == false then return nil end
             local cfg = rawDef == true and {} or (type(rawDef) == "table" and rawDef or {Text = tostring(rawDef)})
+            local blockIcons3D = cfg.Icons3D
+            if blockIcons3D == nil then blockIcons3D = dialogIcons3D end
+            local blockIcon3D = cfg.Icon3D or cfg.Icon3DConfig or dialogIconDefaults.Icon3D
+            local blockIcon3DConfig = cfg.Icon3DConfig
+            local blockIconSize = cfg.IconSize or dialogIconDefaults.IconSize
+            local blockModels = cfg.Models or dialogIconDefaults.Models
             local rawBlocks = cfg.Items or cfg.Blocks or dOpts.Blocks
             local blockCount = cfg.Count or cfg.Total
             if blockCount == nil and type(rawBlocks) == "table" then
@@ -5675,6 +6055,12 @@ local KEY_ALIASES = {
             local buttonDef = {
                 Text = buttonText,
                 Icon = cfg.Icon or "blocks",
+                Model = cfg.Model or cfg.Model3D,
+                Icon3D = cfg.Icon3D,
+                Icon3DConfig = cfg.Icon3DConfig,
+                Models = cfg.Models,
+                IconSize = cfg.IconSize,
+                Icons3D = cfg.Icons3D,
                 Primary = cfg.Primary == true,
                 Style = cfg.Style,
                 Callback = function()
@@ -5698,6 +6084,11 @@ local KEY_ALIASES = {
                         Title = cfg.Title or "Required blocks",
                         Width = tonumber(cfg.DialogWidth or cfg.Width) or 560,
                         Anchor = dOpts.Anchor,
+                        Icons3D = blockIcons3D,
+                        Icon3D = blockIcon3D,
+                        Icon3DConfig = blockIcon3DConfig,
+                        IconSize = blockIconSize,
+                        Models = blockModels,
                         HeaderButtons = headers,
                         Lines = cfg.Description and {{Text = tostring(cfg.Description), Icon = "info"}} or {
                             {Text = tostring(total or 0) .. " required blocks · " .. tostring(listCount) .. " block types", Icon = "blocks"},
@@ -5708,9 +6099,11 @@ local KEY_ALIASES = {
                             Count = total,
                             Columns = cfg.Columns,
                             MaxHeight = cfg.MaxHeight,
-                            Models = cfg.Models,
-                            Icon3D = cfg.Icon3D,
-                            IconSize = cfg.IconSize,
+                            Models = blockModels,
+                            Icon3D = blockIcon3D,
+                            Icon3DConfig = blockIcon3DConfig,
+                            IconSize = blockIconSize,
+                            Icons3D = blockIcons3D,
                             ImageLoader = cfg.ImageLoader or dOpts.ImageLoader,
                             EmptyText = cfg.EmptyText,
                         },
@@ -5752,9 +6145,25 @@ local KEY_ALIASES = {
             for i, raw in ipairs(children) do
                 local def = type(raw) == "string" and {Text = raw} or raw
                 if type(def) == "table" and (string.lower(tostring(def.Type or "")) == "label" or string.lower(tostring(def.Type or "")) == "text") then
+                    local cell = Instance.new("Frame")
+                    cell.Size = UDim2.new(1 / count, -(rowGap * (count - 1)) / count, 1, 0)
+                    cell.LayoutOrder = i
+                    cell.BackgroundTransparency = 1
+                    cell.ZIndex = 152
+                    cell.Parent = row
+                    local iconName, iconModel, iconConfig = buttonIconSpec(def, dialogIconDefaults)
+                    local iconSize = iconConfig and math.clamp(iconConfig.Size, 12, 16) or 12
+                    local inset = 0
+                    if iconName or iconModel or iconConfig then
+                        local iconSlot = createIconSlot(cell, iconSize, iconConfig, 153, 0)
+                        if iconSlot:Set(iconName, iconModel, tostring(def.Text or def.Title or "")) then
+                            iconSlot:Tint(def.Color or "TextMuted")
+                            inset = iconSize + 5
+                        end
+                    end
                     local label = Instance.new("TextLabel")
-                    label.Size = UDim2.new(1 / count, -(rowGap * (count - 1)) / count, 1, 0)
-                    label.LayoutOrder = i
+                    label.Size = UDim2.new(1, -inset, 1, 0)
+                    label.Position = UDim2.new(0, inset, 0, 0)
                     label.BackgroundTransparency = 1
                     label.Text = tostring(def.Text or def.Title or "")
                     label.Font = def.Bold and Enum.Font.GothamBold or Enum.Font.GothamMedium
@@ -5763,7 +6172,7 @@ local KEY_ALIASES = {
                     label.TextTruncate = Enum.TextTruncate.AtEnd
                     bindColor(label, "TextColor3", def.Color or "TextMuted")
                     label.ZIndex = 153
-                    label.Parent = row
+                    label.Parent = cell
                 else
                     if type(def) ~= "table" then def = {Text = tostring(def)} end
                     local btn, buttonHandle = makeButton(row, def, 1 / count, -(rowGap * (count - 1)) / count, i)
@@ -6237,6 +6646,14 @@ local KEY_ALIASES = {
         if marketStyle and opts.Details == false then detailsOpt = false end
         if marketStyle and opts.Details == nil and opts.Dialog == nil then detailsOpt = true end
         local imageLoader = opts.ImageLoader or opts.LoadImage -- function(src, item) -> asset string
+        local marketIcons3D = opts.Icons3D
+        if marketIcons3D == nil then marketIcons3D = opts["3DIcons"] end
+        local marketIconDefaults = {
+            Icons3D = marketIcons3D,
+            Icon3D = opts.Icon3D or opts.Icon3DConfig or opts.Viewport,
+            IconSize = opts.IconSize or opts.Icon3DSize,
+            Models = opts.Models,
+        }
         local remote = (opts.Remote == true) or (opts.ServerSide == true) -- server does paging/search/sort
         local sourceTabs = {}
         for _, t in ipairs(opts.Tabs or {}) do
@@ -6600,6 +7017,8 @@ local KEY_ALIASES = {
                 local progress = item.Buildability
                 if progress and progress > 1 then progress = progress / 100 end
                 local badgeCount = item.Likes or item.Popularity
+                local itemIcons3D = item.Icons3D
+                if itemIcons3D == nil then itemIcons3D = marketIcons3D end
                 local blocksButton
                 local globalBlocksButton = opts.BlocksButton
                 local blocksButtonEnabled = globalBlocksButton ~= false and opts.ShowBlocksButton ~= false
@@ -6611,12 +7030,16 @@ local KEY_ALIASES = {
                         Icon = opts.BlocksButtonIcon or "blocks",
                         Items = item.BlockList,
                         Count = item.BlockCount,
-                        Models = opts.BlockModels,
-                        Icon3D = opts.BlockIcon3D,
-                        IconSize = opts.BlockIconSize,
+                        Models = opts.BlockModels or item.BlockModels or item.Models or marketIconDefaults.Models,
+                        Icon3D = opts.BlockIcon3D or item.BlockIcon3D or item.Icon3D or opts.Icon3D or marketIconDefaults.Icon3D,
+                        Icon3DConfig = opts.BlockIcon3DConfig or item.BlockIcon3DConfig,
+                        IconSize = opts.BlockIconSize or item.BlockIconSize or item.IconSize or opts.IconSize or marketIconDefaults.IconSize,
+                        Icons3D = opts.BlockIcons3D,
                         ImageLoader = imageLoader and function(src) return imageLoader(src, item) end or nil,
                         OnBack = function() showDetails(item) end,
                     }
+                    if blocksButton.Icons3D == nil then blocksButton.Icons3D = item.BlockIcons3D end
+                    if blocksButton.Icons3D == nil then blocksButton.Icons3D = itemIcons3D end
                     if type(globalBlocksButton) == "table" then
                         for key, value in pairs(globalBlocksButton) do
                             if key ~= "Enabled" then blocksButton[key] = value end
@@ -6637,6 +7060,12 @@ local KEY_ALIASES = {
                     Author = item.Author,
                     Verified = item.Verified,
                     Images = item.Images,
+                    Model = item.Model,
+                    Icon3D = item.Icon3D or marketIconDefaults.Icon3D,
+                    Models = item.Models or marketIconDefaults.Models,
+                    Icons3D = itemIcons3D,
+                    IconSize = item.IconSize or marketIconDefaults.IconSize,
+                    Icon = item.IconName,
                     Fit = item.Fit,
                     ImageHeight = tonumber(opts.DetailImageHeight) or 190,
                     Width = tonumber(opts.DetailWidth) or 540,
@@ -6658,9 +7087,17 @@ local KEY_ALIASES = {
             if item.Category and item.Category ~= "" then table.insert(lines, {Text = tostring(item.Category), Icon = "tag"}) end
             if item.Description then table.insert(lines, {Text = tostring(item.Description), Icon = "info"}) end
             local ratingText = formatRating(item.Rating)
+            local itemIcons3D = item.Icons3D
+            if itemIcons3D == nil then itemIcons3D = marketIcons3D end
             return {
                 Title = item.Name,
                 Images = item.Images,
+                Model = item.Model,
+                Icon3D = item.Icon3D or marketIconDefaults.Icon3D,
+                Models = item.Models or marketIconDefaults.Models,
+                Icons3D = itemIcons3D,
+                IconSize = item.IconSize or marketIconDefaults.IconSize,
+                Icon = item.IconName,
                 Fit = item.Fit,
                 Tag = item.Category,
                 Badge = ratingText and ("★ " .. ratingText) or nil,
@@ -6673,7 +7110,7 @@ local KEY_ALIASES = {
 
         showDetails = function(item, overrides)
             if not item then return nil end
-            item = normalizeBrowseItem(item, 0, marketStyle)
+            item = normalizeBrowseItem(item, 0, marketStyle, marketIconDefaults.Models)
             local spec = defaultDetails(item)
             local user = overrides
             if user == nil then
@@ -6775,12 +7212,41 @@ local KEY_ALIASES = {
 
         local function fillThumb(thumb, item, generation)
             for _, child in ipairs(thumb:GetChildren()) do
-                if child:IsA("ImageLabel") then child:Destroy() end
+                if child:IsA("ImageLabel") or child.Name == "CardPreview" then child:Destroy() end
             end
+
+            local itemIcons3D = item.Icons3D
+            if itemIcons3D == nil then itemIcons3D = marketIconDefaults.Icons3D end
+            local itemIconDefaults = {
+                Icons3D = itemIcons3D,
+                Icon3D = item.Icon3D or marketIconDefaults.Icon3D,
+                IconSize = item.IconSize or marketIconDefaults.IconSize,
+                Models = item.Models or marketIconDefaults.Models,
+            }
+            local iconDef = {
+                Icon = item.IconName or item.Icon,
+                Model = item.Model,
+                Icon3D = item.Icon3D,
+                Models = item.Models,
+                IconSize = item.IconSize,
+                Icons3D = item.Icons3D,
+            }
+            local iconName, modelValue, modelConfig = buttonIconSpec(iconDef, itemIconDefaults)
+            local resolvedModel = modelConfig and resolveModel(modelValue, item.Name, modelConfig) or nil
             local sources = {}
-            for i = 1, math.min(2, #item.Images) do sources[i] = item.Images[i] end
+            if resolvedModel then
+                table.insert(sources, {Model = resolvedModel, Icon3D = modelConfig, Name = item.Name})
+            end
+            for _, src in ipairs(item.Images or {}) do
+                if #sources >= 2 then break end
+                if src ~= item.Model and src ~= resolvedModel then table.insert(sources, src) end
+            end
+            if #sources == 0 and iconName then
+                table.insert(sources, {Icon = iconName})
+            end
             if #sources == 0 then
                 local ph = Instance.new("ImageLabel")
+                ph.Name = "CardPreview"
                 ph.Size = UDim2.new(0, 22, 0, 22)
                 ph.Position = UDim2.new(0.5, -11, 0.5, -11)
                 ph.BackgroundTransparency = 1
@@ -6790,36 +7256,86 @@ local KEY_ALIASES = {
                 ph.Parent = thumb
                 return
             end
+
             local count = #sources
             for i, src in ipairs(sources) do
-                local img = Instance.new("ImageLabel")
-                if item.Fit then -- icon-like pictures: keep some air around them
-                    img.Size = UDim2.new(1 / count, -24, 1, -28)
-                    img.Position = UDim2.new((i - 1) / count, 12, 0, 14)
+                local sourceDef = type(src) == "table" and src or nil
+                local sourceOptions = sourceDef or (typeof(src) == "Instance" and {Model = src}) or {Icon = src}
+                local sourceDefaults = {
+                    Icons3D = itemIconDefaults.Icons3D,
+                    Icon3D = itemIconDefaults.Icon3D,
+                    IconSize = itemIconDefaults.IconSize,
+                    Models = (sourceDef and sourceDef.Models) or itemIconDefaults.Models,
+                }
+                local sourceIcon, sourceModel, sourceConfig = buttonIconSpec(sourceOptions, sourceDefaults)
+                local label = tostring((sourceDef and (sourceDef.Name or sourceDef.Text)) or item.Name)
+                local fit = item.Fit
+                if sourceDef and sourceDef.Fit ~= nil then fit = sourceDef.Fit end
+                local size, position
+                if fit then
+                    size = UDim2.new(1 / count, -24, 1, -28)
+                    position = UDim2.new((i - 1) / count, 12, 0, 14)
                 else
-                    img.Size = UDim2.new(1 / count, count > 1 and -1 or 0, 1, 0)
-                    img.Position = UDim2.new((i - 1) / count, (i > 1) and 1 or 0, 0, 0)
+                    size = UDim2.new(1 / count, count > 1 and -1 or 0, 1, 0)
+                    position = UDim2.new((i - 1) / count, (i > 1) and 1 or 0, 0, 0)
                 end
-                img.BackgroundTransparency = 1
-                img.ScaleType = item.Fit and Enum.ScaleType.Fit or imageScale
-                img.ZIndex = 6
-                img.Parent = thumb
-                local immediate = (imageLoader == nil and not (type(src) == "string" and string.match(src, "^https?://")))
-                    and resolveBrowseImage(src) or nil
-                if immediate then
-                    img.Image = immediate
+
+                local modelPreview = sourceConfig and createModelViewport(thumb, sourceModel, label, sourceConfig, 6) or nil
+                if modelPreview then
+                    local slot = modelPreview.Frame
+                    slot.Name = "CardPreview"
+                    slot.Size = size
+                    slot.Position = position
+                    slot.ZIndex = 6
                 else
-                    task.spawn(function()
-                        local asset
-                        if imageLoader then
-                            local ok, res = pcall(imageLoader, src, item)
-                            asset = (ok and type(res) == "string") and res or nil
+                    local imageSource = sourceDef and (sourceDef.Image or sourceDef.image or sourceDef.Thumbnail or sourceDef.Url or sourceDef.Source)
+                    if imageSource == nil and not sourceDef then
+                        if typeof(src) == "Instance" then
+                            imageSource = nil
+                        elseif type(src) == "string" and not (LUCIDE[src] or CUSTOM_ICON_DATA[src]) then
+                            imageSource = src
+                        elseif type(src) == "number" then
+                            imageSource = src
                         end
-                        if not asset then asset = resolveBrowseImage(src) end
-                        if state.Generation == generation and img.Parent and asset then
-                            img.Image = asset
+                    end
+                    if imageSource ~= nil then
+                        local img = Instance.new("ImageLabel")
+                        img.Name = "CardPreview"
+                        img.Size = size
+                        img.Position = position
+                        img.BackgroundTransparency = 1
+                        img.ScaleType = fit and Enum.ScaleType.Fit or imageScale
+                        img.ZIndex = 6
+                        img.Parent = thumb
+                        local immediate = (imageLoader == nil and not (type(imageSource) == "string" and string.match(imageSource, "^https?://")))
+                            and resolveBrowseImage(imageSource) or nil
+                        if immediate then
+                            img.Image = immediate
+                        else
+                            task.spawn(function()
+                                local asset
+                                if imageLoader then
+                                    local ok, res = pcall(imageLoader, imageSource, item)
+                                    asset = (ok and type(res) == "string") and res or nil
+                                end
+                                if not asset then asset = resolveBrowseImage(imageSource) end
+                                if state.Generation == generation and img.Parent and asset then
+                                    img.Image = asset
+                                end
+                            end)
                         end
-                    end)
+                    elseif sourceIcon then
+                        local img = Instance.new("ImageLabel")
+                        img.Name = "CardPreview"
+                        img.AnchorPoint = Vector2.new(0.5, 0.5)
+                        img.Size = UDim2.new(0, 24, 0, 24)
+                        img.Position = UDim2.new((i - 1) / count + 0.5 / count, 0, 0.5, 0)
+                        img.BackgroundTransparency = 1
+                        img.Image = resolveIcon(sourceIcon)
+                        tintIcon(img, sourceIcon, "TextDim")
+                        img.ZIndex = 6
+                        img.Parent = thumb
+                    end
                 end
             end
         end
@@ -7028,7 +7544,7 @@ local KEY_ALIASES = {
                             local textKey = primary and "KnobOn" or "TextPrimary"
                             bindColor(btn, "BackgroundColor3", bgKey)
                             if primary then stroke.Transparency = 1 end
-                            local iconName, iconModel, iconConfig = buttonIconSpec(def)
+                            local iconName, iconModel, iconConfig = buttonIconSpec(def, marketIconDefaults)
                             local iconSlotSize = iconConfig and math.clamp(iconConfig.Size, 12, 16) or 12
                             local iconSlot = createIconSlot(btn, iconSlotSize, iconConfig, 9)
                             local buttonText = tostring(def.Text or def.Name or "Action")
@@ -7331,7 +7847,7 @@ local KEY_ALIASES = {
         local function setItems(list)
             local items = {}
             for i, raw in ipairs(extractBrowseList(list)) do
-                local item = normalizeBrowseItem(raw, i, marketStyle)
+                local item = normalizeBrowseItem(raw, i, marketStyle, marketIconDefaults.Models)
                 if item then table.insert(items, item) end
             end
             state.Items = items
@@ -7421,7 +7937,7 @@ local KEY_ALIASES = {
                     if remote then
                         state.Items = {}
                         for i, raw in ipairs(extractBrowseList(result)) do
-                            local item = normalizeBrowseItem(raw, (ctx.Page - 1) * pageSize + i, marketStyle)
+                            local item = normalizeBrowseItem(raw, (ctx.Page - 1) * pageSize + i, marketStyle, marketIconDefaults.Models)
                             if item then table.insert(state.Items, item) end
                         end
                         if autoCategories then setCategories(collectCategories(state.Items)) end
@@ -7749,7 +8265,7 @@ local KEY_ALIASES = {
         Browse.AddHStack = Browse.AddCardHStack
         function Browse:SetItems(list) setItems(list or {}) end
         function Browse:AddItem(raw)
-            local item = normalizeBrowseItem(raw, #state.Items + 1, marketStyle)
+            local item = normalizeBrowseItem(raw, #state.Items + 1, marketStyle, marketIconDefaults.Models)
             if not item then return end
             table.insert(state.Items, item)
             if autoCategories then setCategories(collectCategories(state.Items)) end

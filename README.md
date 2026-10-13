@@ -191,6 +191,53 @@ dropdown handles expose `.Icon` (the icon slot; `.Icon.Viewport` has
 `Window.CreateViewportIcon(parent, cfg, zIndex)` is exported for custom UI:
 returns `{Frame, Camera, World, SetModel(inst), SetAngle(v3), SetZoom(n), Destroy}`.
 
+### 3D previews in Browse, FileMarket and Dialog
+
+The same model/camera settings work in gallery thumbnails, details dialogs,
+Dialog lines/stats/buttons, and required-block cards. Use `Model` / `Model3D`
+for a specific model, or `Models` as a shared Folder, table, or lookup function.
+A model is resolved first by the explicit model/icon key and then by its display
+name. `Icons3D = true` enables model lookup; it also auto-enables when `Model`
+or `Models` is supplied. `Icons3D = false` explicitly keeps the 2D behavior.
+`Icon3D` accepts the same camera fields shown above; `IconSize` sets the icon
+slot size. Existing Lucide `Icon` names and `Image` / `Images` assets remain
+valid and are used when no model is found.
+
+```lua
+local models = ReplicatedStorage.BuildModels
+
+local Market = Window:CreateBrowsec({
+    Icons3D = true,
+    Icon3D = { FOV = 40, Angle = Vector3.new(20, -35, 0), Spin = true },
+    Models = models, -- looked up by item name, block name, or an explicit Model key
+    Items = {
+        { Name = "Sky Fortress", Image = "rbxassetid://123", BlockList = {
+            { Name = "Metal Block", Count = 12 }, -- Models["Metal Block"] / matching child
+        } },
+    },
+})
+
+Window:CreateDialog({
+    Title = "Sky Fortress",
+    Images = { "rbxassetid://123" }, -- keep a 2D image alongside the model preview
+    Model = models:FindFirstChild("Sky Fortress"),
+    Icons3D = true,
+    Icon3D = { FOV = 35, Padding = 1.2 },
+    Models = models,
+    Lines = { { Text = "Verified build", Icon = "circle-check" } },
+    Stats = { { Label = "Blocks", Value = 12, Icon = "blocks" } },
+    BlocksGrid = {
+        Items = { { Name = "Metal Block", Count = 12 } },
+        Models = models, Icons3D = true,
+    },
+})
+```
+
+Per-item or per-block `Icons3D`, `Icon3D`, `IconSize` and `Models` values
+override the shared settings. `Images` may also contain model Instances or
+preview records such as `{ Name = "Preview", Model = model }`; ordinary image
+IDs/URLs still render as 2D images.
+
 ## Browse
 
 `Window:CreateBrowseTab` adds a full-width gallery: a search box, a sort switch
@@ -262,6 +309,16 @@ verification, crisp metrics, buildability and a copyable 3D link. Required
 blocks open in their own dialog as individual cards with an icon or 3D model and
 quantity. Thumbnail icons default to Fit; set `Fit = false` for cover art.
 
+3D previews are available on both card thumbnails and the details dialog. Set
+`Icons3D = true`, `Icon3D = { FOV, Angle, Padding, Zoom, Spin, ... }`, and
+`Models` on the market options for shared defaults; individual items can override
+these with `Model` / `Model3D`, `Icon3D`, `IconSize`, `Icons3D`, or `Models`.
+The same settings flow into required-block cards. Each block can provide a direct
+`Model`, or a named model can be found in `Models` by the block's `Name` (an
+explicit block icon/model key is checked first). If no model resolves, the
+existing `Image` / `Icon` rendering is kept; use `Icons3D = false` to force the
+2D fallback.
+
 ```lua
 local Market
 Market = Window:CreateBrowsec({
@@ -330,12 +387,13 @@ market)` runs for the built-in download action. Items accept `Downloads`,
 addition to the regular Browse fields. Each block can be a string or an object
 with `Name`, `Count` / `Amount` / `Quantity`, `Icon` or `Image`; use `Model` /
 `Model3D` (or `Models` plus the block name) for a ViewportFrame 3D preview.
-`Icon3D` can configure its camera (`Spin`, `Angle`, `Padding`, `Zoom`).
+`Icons3D`, `IconSize`, `Icon3D` / `Icon3DConfig` and `Models` accept the shared
+settings above. `Icon` stays the Lucide/2D fallback when no model resolves.
 
 `BlocksButton` in a `Details` spec customizes the required-blocks button and
 its dialog. Its fields include `Text`, `Title`, `Icon`, `Items` / `Blocks`,
-`Count`, `Columns`, `MaxHeight`, `Models`, `Icon3D` and `ImageLoader`. The item
-list/count default from `item.BlockList` / `item.BlockCount`. Set
+`Count`, `Columns`, `MaxHeight`, `Models`, `Icon3D`, `IconSize`, `Icons3D` and
+`ImageLoader`. The item list/count default from `item.BlockList` / `item.BlockCount`. Set
 `BlocksButton = false` (or the window option `ShowBlocksButton = false`) to
 hide the button; old `Blocks = ...` detail specs remain as inline lists.
 
@@ -392,7 +450,9 @@ Field names are matched case-insensitively with common aliases:
 | `Name` | `name`, `title` |
 | `Category` | `category`, `type`, `class`, `kind` |
 | `Rating` | `rating`, `likes`, `score`, `percent` (0–1 is treated as a fraction) |
-| `Image` / `Images` | `image`, `thumbnail`, `icon`, `images`, `thumbnails`, `previews` (up to 2 are shown side by side) |
+| `Image` / `Images` | `image`, `thumbnail`, `images`, `thumbnails`, `previews` (up to 2 are shown side by side) |
+| `Icon` | `icon` (Lucide name, image asset, or model lookup key) |
+| `Model` / `Models` | `model`, `model3d` / shared model folder, table, or lookup function |
 | `Author` | `author`, `creator`, `owner` |
 | `Date` | `date`, `time`, `created`, `timestamp` (used by the "New" sort) |
 | `Tags` | `tags` (also matched by category chips and search) |
@@ -490,6 +550,15 @@ dialog:GetButton(1):SetText("Building...")   -- by index or by `Id`
 dialog:GetButton("swap"):SetEnabled(false)
 dialog:IsOpen() / dialog:Close()
 ```
+
+Dialog preview options include `Model` / `Model3D`, `Icon3D` (or
+`Icon3DConfig`), `Models`, `Icons3D` and `IconSize`. A model preview can be
+shown alongside ordinary `Images`; `Images` entries may also be model Instances
+or `{ Model = model, Name = "..." }` records. The same icon options are accepted
+by `HeaderButtons`, `Lines`, `Stats`, `Buildability`, typed `Elements`, HStack
+text/button entries, and button definitions. `Blocks` supports compact rows; `BlocksGrid` and
+`BlocksButton` render full required-block cards. All retain 2D Lucide/image
+fallbacks when 3D is off or a model cannot be resolved.
 
 Button styles: `Primary = true` (filled accent), `Accent = true` (accent text),
 default (neutral). `Close = true` closes the dialog after the callback. Only one
