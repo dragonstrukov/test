@@ -254,11 +254,13 @@ the bare panel into any frame of your own.
 ### Browsec File Market
 
 `CreateBrowsec` opens a **separate** File Market window; it does not replace or
-change `CreateBrowseTab` / `CreateBrowseWindow`. It uses the dark three-column
+change `CreateBrowseTab` / `CreateBrowseWindow`. It uses the light three-column
 card layout, category chips and a sort dropdown (`Newest`, `Most downloaded`,
 `Most popular`). Cards can show rank, preview, block/download/popularity counts,
-and Details/Download actions. The details dialog supports author verification,
-metrics, buildability, block lists and a copyable 3D link.
+and Details/Download actions. The wider details dialog supports author
+verification, crisp metrics, buildability and a copyable 3D link. Required
+blocks open in their own dialog as individual cards with an icon or 3D model and
+quantity. Thumbnail icons default to Fit; set `Fit = false` for cover art.
 
 ```lua
 local Market
@@ -269,9 +271,13 @@ Market = Window:CreateBrowsec({
         {
             Id = "sky-fortress", Name = "Sky Fortress", Category = "Aircraft",
             Author = "Builder42", Verified = true, Published = "Oct 2026",
-            Image = "rbxassetid://81973586053257", Downloads = 1824, Likes = 96,
+            Image = "rbxassetid://81973586053257", Fit = true, Downloads = 1824, Likes = 96,
             BuildValue = 3226, Buildability = 0.94, BlockCount = 317,
-            BlockList = {"Metal Block", "Glass", "Thruster"},
+            BlockList = {
+                { Name = "Metal Block", Count = 220, Icon = "box" },
+                { Name = "Glass", Count = 52, Icon = "gem" },
+                { Name = "Thruster", Count = 45, Icon = "wind" },
+            },
             ViewUrl = "https://example.com/builds/sky-fortress/3d",
         },
     },
@@ -289,7 +295,10 @@ Market = Window:CreateBrowsec({
                 { Label = "Build Value", Value = item.BuildValue, Icon = "coins" },
             },
             Buildability = { Value = item.Buildability, Label = "Buildability", Detail = "All required blocks found" },
-            Blocks = item.BlockList and { Count = item.BlockCount, Items = item.BlockList } or item.BlockCount,
+            BlocksButton = {
+                Text = "Required Blocks", Title = "Blocks required for this build",
+                Icon = "blocks", Columns = 2,
+            },
             ShareLink = { Url = item.ViewUrl, Label = "View in 3D in your browser" },
         }
     end,
@@ -317,19 +326,36 @@ or `"Download"`, and `Callback(item, market)`. `Market:AddButton(def)` and
 `Market:AddHStack(defs)` add actions to every card. `DownloadCallback(item, raw,
 market)` runs for the built-in download action. Items accept `Downloads`,
 `Likes` / `Popularity`, `BuildValue`, `Buildability` (fraction or percent),
-`BlockCount`, `BlockList`, `Verified`, `Published` and `ViewUrl` in addition to
-the regular Browse fields. Options such as `Source`, `Fetch`, `ImageLoader`,
-`ToggleKey`, `Resizable` and `OnResize` work as they do in Browse.
+`BlockCount`, `BlockList`, `Verified`, `Published`, `ViewUrl` and `Fit` in
+addition to the regular Browse fields. Each block can be a string or an object
+with `Name`, `Count` / `Amount` / `Quantity`, `Icon` or `Image`; use `Model` /
+`Model3D` (or `Models` plus the block name) for a ViewportFrame 3D preview.
+`Icon3D` can configure its camera (`Spin`, `Angle`, `Padding`, `Zoom`).
+
+`BlocksButton` in a `Details` spec customizes the required-blocks button and
+its dialog. Its fields include `Text`, `Title`, `Icon`, `Items` / `Blocks`,
+`Count`, `Columns`, `MaxHeight`, `Models`, `Icon3D` and `ImageLoader`. The item
+list/count default from `item.BlockList` / `item.BlockCount`. Set
+`BlocksButton = false` (or the window option `ShowBlocksButton = false`) to
+hide the button; old `Blocks = ...` detail specs remain as inline lists.
 
 For reusable content in `Details`, use `Stats`, `Buildability`, `Blocks`,
-`ShareLink`, or a list of typed `Elements` such as
+`BlocksButton`, `ShareLink`, or a list of typed `Elements` such as
 `{ Type = "HStack", Items = { {Text = "One"}, {Text = "Two"} } }`.
 The returned dialog can also be extended from `OnDetails` with
 `dialog:AddButton`, `AddHStack`, `AddLabel` / `AddText`, `AddDivider`,
-`AddProgressBar`, `AddStats`, `AddBlocks`, `AddCopyLink` or `AddElement`.
-`HStack` accepts two or three buttons (or text/button elements). Callbacks in a
-`Details` spec receive `(item, dialog)`; callbacks passed to a runtime
-`dialog:AddButton` / `AddHStack` receive `(dialog)`.
+`AddProgressBar`, `AddStats`, `AddBlocks`, `AddBlocksGrid`, `AddBlocksButton`,
+`AddCopyLink` or `AddElement`. `HStack` accepts two or three buttons (or
+text/button elements). Buttons with Lucide icons or 3D models keep the icon on
+the left. Callbacks in a `Details` spec receive `(item, dialog)`; callbacks
+passed to a runtime `dialog:AddButton` / `AddHStack` receive `(dialog)`.
+
+The standalone window and modal fit the available viewport on phones and small
+screens; the market switches to one/two columns as it gets narrower. On a
+resizable window, hold **Shift** while dragging the bottom-right grip to change
+the window size without scaling its controls. Without Shift, the existing
+scale-to-fit resize mode remains. `Mobile = true/false` can override device
+detection, and `MobileColumns` can set a fixed responsive column count.
 
 ### Server-side paging (`Fetch`)
 

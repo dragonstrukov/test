@@ -1,5 +1,5 @@
 local Library = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/dragonstrukov/MacrOS-library/main/Library.lua"
+    "https://raw.githubusercontent.com/dragonstrukov/test/arena/c0f8e00a-test/Library.lua"
 ))()
 
 local Window = Library:CreateWindow({
@@ -362,25 +362,40 @@ FileMarket = Window:CreateBrowsec({
         {
             Id = "sky-fortress", Name = "Sky Fortress", Category = "Aircraft",
             Author = "Builder42", Verified = true, Published = "Oct 12, 2026",
-            Image = "rbxassetid://81973586053257", Downloads = 1824, Likes = 96,
+            Image = "rbxassetid://81973586053257", Fit = true, Downloads = 1824, Likes = 96,
             BuildValue = 3226, Buildability = 94, BlockCount = 317,
-            BlockList = { { Name = "Metal Block", Count = 220 }, { Name = "Glass", Count = 52 }, { Name = "Thruster", Count = 8 } },
+            BlockList = {
+                { Name = "Metal Block", Count = 220, Model = demoPart(Enum.PartType.Block, Color3.fromRGB(145, 158, 175), Vector3.new(1, 1, 1)) },
+                { Name = "Glass", Count = 52, Icon = "gem" },
+                { Name = "Thruster", Count = 45, Icon = "wind" },
+            },
             ViewUrl = "https://example.com/builds/sky-fortress/3d",
         },
         {
             Id = "desert-outpost", Name = "Desert Outpost", Category = "Buildings",
             Author = "KiteWorks", Verified = true, Published = "Oct 10, 2026",
-            Image = "rbxassetid://130551565616516", Downloads = 986, Likes = 74,
+            Image = "rbxassetid://130551565616516", Fit = true, Downloads = 986, Likes = 74,
             BuildValue = 2180, Buildability = 0.88, BlockCount = 204,
-            BlockList = { "Wood", "Glass", "Roof Tile", "Door" },
+            BlockList = {
+                { Name = "Wood", Count = 118, Icon = "box" },
+                { Name = "Glass", Count = 36, Icon = "gem" },
+                { Name = "Roof Tile", Count = 44, Icon = "square" },
+                { Name = "Door", Count = 6, Icon = "house" },
+            },
             ViewUrl = "https://example.com/builds/desert-outpost/3d",
         },
         {
             Id = "rally-car", Name = "Rally Car", Category = "Vehicles",
             Author = "NovaBuilds", Verified = false, Published = "Oct 08, 2026",
-            Image = "rbxassetid://110273524101447", Downloads = 731, Likes = 53,
+            Image = "rbxassetid://110273524101447", Fit = true, Downloads = 731, Likes = 53,
             BuildValue = 1740, Buildability = 0.76, BlockCount = 156,
-            BlockList = { "Frame", "Wheel", "Engine", "Seat" },
+            BlockList = {
+                { Name = "Frame", Count = 100, Icon = "layers" },
+                { Name = "Wheel", Count = 4, Icon = "circle" },
+                { Name = "Engine", Count = 1, Icon = "cog" },
+                { Name = "Seat", Count = 1, Icon = "square" },
+                { Name = "Metal Panel", Count = 50, Icon = "blocks" },
+            },
             ViewUrl = "https://example.com/builds/rally-car/3d",
         },
     },
@@ -394,7 +409,12 @@ FileMarket = Window:CreateBrowsec({
                 { Label = "Build Value", Value = item.BuildValue, Icon = "coins" },
             },
             Buildability = { Value = item.Buildability, Label = "Buildability", Detail = "Required blocks found" },
-            Blocks = item.BlockList and { Count = item.BlockCount, Items = item.BlockList } or item.BlockCount,
+            BlocksButton = {
+                Text = "Required Blocks",
+                Title = "Blocks required for this build",
+                Icon = "blocks",
+                Columns = 2,
+            },
             ShareLink = { Url = item.ViewUrl, Label = "View in 3D in your browser" },
         }
     end,
